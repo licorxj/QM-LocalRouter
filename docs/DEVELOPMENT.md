@@ -285,7 +285,8 @@ Input and output are OpenAI Chat Completions format, no conversion needed.
 - **Response**: Anthropic response -> OpenAI format (content[0].text -> choices[0].message.content)
 
 ### Gemini (Google) Protocol
-- **Request**: OpenAI messages -> Gemini GenerateContent (contents + ole mapping, generationConfig)
+- **Request**: OpenAI messages -> Gemini GenerateContent (contents + 
+ole mapping, generationConfig)
 - **Response**: Gemini response -> OpenAI format (candidates[0].content.parts[0].text -> choices[0].message.content)
 
 ---
@@ -296,9 +297,11 @@ Input and output are OpenAI Chat Completions format, no conversion needed.
 
 | Strategy | Description |
 |----------|-------------|
-| ound_robin | Sequential rotation |
+| 
+ound_robin | Sequential rotation |
 | weighted | Weight-proportional distribution |
-| andom | Random selection |
+| 
+andom | Random selection |
 | ailover | Priority-based, switch on failure |
 | priority | Always highest priority |
 
@@ -306,8 +309,10 @@ Input and output are OpenAI Chat Completions format, no conversion needed.
 
 | Strategy | Description |
 |----------|-------------|
-| ound_robin | Round-robin across keys |
-| andom | Random key selection |
+| 
+ound_robin | Round-robin across keys |
+| 
+andom | Random key selection |
 | ailover | Use first key, switch on failure |
 
 ### Key Switch Triggers
@@ -316,7 +321,8 @@ Input and output are OpenAI Chat Completions format, no conversion needed.
 |------|-------------|
 | 
 one | No automatic switching |
-| pm_threshold | Switch when requests/min exceeds threshold |
+| 
+pm_threshold | Switch when requests/min exceeds threshold |
 | count_threshold | Switch when total requests exceed threshold |
 
 ---

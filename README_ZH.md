@@ -1,8 +1,8 @@
-# LocalRouter
+﻿# LocalRouter
 
-> **你的本地 API 路由管家** | Your Local LLM API Routing Manager
+> **浣犵殑鏈湴 API 璺敱绠″** | Your Local LLM API Routing Manager
 
-> [English](README.md) | **中文**
+> [English](README.md) | **涓枃**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -11,174 +11,150 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 <p align="center">
-  <img src="docs/images/%E4%B8%BB%E9%A1%B5.png" alt="LocalRouter 界面预览" width="800">
+  <img src="docs/images/%E4%B8%BB%E9%A1%B5.png" alt="LocalRouter 鐣岄潰棰勮" width="800">
 </p>
 
 ---
 
-## 核心亮点
+## 鏍稿績浜偣
 
-- **⚡ 本地一站式管理** — 集中管理所有上游 AI 平台（OpenAI、Anthropic、Google Gemini、DeepSeek 等 65+ 平台），所有配置和数据存储本地，无需公网暴露
-- **🔄 多策略智能路由** — 5 种负载均衡策略（轮询、加权、随机、故障转移、优先级）+ 自动故障切换
-- **🔑 多 Key 负载均衡** — 每个平台可配置多个 API Key，支持 RPM 阈值和计数阈值自动切换
-- **🤖 多 Model 自动调度** — 根据策略规则自动选择最优模型，支持模型级别自动降级
-- **🛡️ 协议自动转换** — OpenAI / Claude / Gemini 三种协议自动互转，任意 SDK 调用任意模型
-- **🔒 数据安全** — 纯本地运行，API Key 使用 Fernet 加密存储，零数据外泄
-- **🌐 局域网共享** — 部署后局域网内所有设备共享 API Key 和路由策略，只需一个接入点
+- **鈿?鏈湴涓€绔欏紡绠＄悊** 鈥?闆嗕腑绠＄悊鎵€鏈変笂娓?AI 骞冲彴锛圤penAI銆丄nthropic銆丟oogle Gemini銆丏eepSeek 绛?65+ 骞冲彴锛夛紝鎵€鏈夐厤缃拰鏁版嵁瀛樺偍鏈湴锛屾棤闇€鍏綉鏆撮湶
+- **馃攧 澶氱瓥鐣ユ櫤鑳借矾鐢?* 鈥?5 绉嶈礋杞藉潎琛＄瓥鐣ワ紙杞銆佸姞鏉冦€侀殢鏈恒€佹晠闅滆浆绉汇€佷紭鍏堢骇锛? 鑷姩鏁呴殰鍒囨崲
+- **馃攽 澶?Key 璐熻浇鍧囪　** 鈥?姣忎釜骞冲彴鍙厤缃涓?API Key锛屾敮鎸?RPM 闃堝€煎拰璁℃暟闃堝€艰嚜鍔ㄥ垏鎹?- **馃 澶?Model 鑷姩璋冨害** 鈥?鏍规嵁绛栫暐瑙勫垯鑷姩閫夋嫨鏈€浼樻ā鍨嬶紝鏀寔妯″瀷绾у埆鑷姩闄嶇骇
+- **馃洝锔?鍗忚鑷姩杞崲** 鈥?OpenAI / Claude / Gemini 涓夌鍗忚鑷姩浜掕浆锛屼换鎰?SDK 璋冪敤浠绘剰妯″瀷
+- **馃敀 鏁版嵁瀹夊叏** 鈥?绾湰鍦拌繍琛岋紝API Key 浣跨敤 Fernet 鍔犲瘑瀛樺偍锛岄浂鏁版嵁澶栨硠
+- **馃寪 灞€鍩熺綉鍏变韩** 鈥?閮ㄧ讲鍚庡眬鍩熺綉鍐呮墍鏈夎澶囧叡浜?API Key 鍜岃矾鐢辩瓥鐣ワ紝鍙渶涓€涓帴鍏ョ偣
 
 ---
 
-## 为什么选择 LocalRouter？
+## 涓轰粈涔堥€夋嫨 LocalRouter锛?
+绠＄悊澶氫釜 LLM 骞冲彴闈炲父鐥涜嫤銆傛瘡涓钩鍙伴兘鏈変笉鍚岀殑 API 鏍煎紡銆佽璐规柟寮忓拰閫熺巼闄愬埗銆備綘闇€瑕佺淮鎶ゅ濂?API Key銆佸涓?SDK銆佹墜鍔ㄥ鐞嗘晠闅滆浆绉汇€?
+**LocalRouter 閫氳繃涓€涓粺涓€鐨?OpenAI 鍏煎绔偣瑙ｅ喅浜嗚繖浜涢棶棰橈細**
 
-管理多个 LLM 平台非常痛苦。每个平台都有不同的 API 格式、计费方式和速率限制。你需要维护多套 API Key、多个 SDK、手动处理故障转移。
-
-**LocalRouter 通过一个统一的 OpenAI 兼容端点解决了这些问题：**
-
-| 问题 | 解决方案 |
+| 闂 | 瑙ｅ喅鏂规 |
 |------|----------|
-| 多个平台 SDK 不统一 | 单一 OpenAI 兼容 API |
-| API Key 管理混乱 | 集中密钥管理 + 加密存储 |
-| 平台故障 | 自动故障转移到备用平台/Key |
-| 速率限制 | 多 Key 轮换 + RPM 智能切换 |
-| 协议不兼容 | 自动转换 OpenAI/Claude/Gemini 格式 |
-| 模型发现困难 | 一键从上游同步 + 内置 100+ 已知模型库 |
+| 澶氫釜骞冲彴 SDK 涓嶇粺涓€ | 鍗曚竴 OpenAI 鍏煎 API |
+| API Key 绠＄悊娣蜂贡 | 闆嗕腑瀵嗛挜绠＄悊 + 鍔犲瘑瀛樺偍 |
+| 骞冲彴鏁呴殰 | 鑷姩鏁呴殰杞Щ鍒板鐢ㄥ钩鍙?Key |
+| 閫熺巼闄愬埗 | 澶?Key 杞崲 + RPM 鏅鸿兘鍒囨崲 |
+| 鍗忚涓嶅吋瀹?| 鑷姩杞崲 OpenAI/Claude/Gemini 鏍煎紡 |
+| 妯″瀷鍙戠幇鍥伴毦 | 涓€閿粠涓婃父鍚屾 + 鍐呯疆 100+ 宸茬煡妯″瀷搴?|
 
 ---
 
-## 🌐 局域网统一管理优势
+## 馃寪 灞€鍩熺綉缁熶竴绠＄悊浼樺娍
 
-LocalRouter 从设计之初就为**局域网（LAN）部署**而优化。开启局域网访问后，网内所有设备共享一个接入点：
-
-| 优势 | 说明 |
+LocalRouter 浠庤璁′箣鍒濆氨涓?*灞€鍩熺綉锛圠AN锛夐儴缃?*鑰屼紭鍖栥€傚紑鍚眬鍩熺綉璁块棶鍚庯紝缃戝唴鎵€鏈夎澶囧叡浜竴涓帴鍏ョ偣锛?
+| 浼樺娍 | 璇存槑 |
 |------|------|
-| **💰 成本共享** | 一份 API Key 订阅服务整个团队，无需为每台设备单独购买 |
-| **🔑 集中密钥管理** | 一处添加/轮换 API Key，所有局域网设备自动生效 |
-| **📋 统一策略管控** | 路由规则一次定义，团队成员共享相同的智能路由策略 |
-| **⚡ 零延迟开销** | 局域网转发延迟 <1ms，无需经过云端中转 |
-| **🔒 数据隐私** | 所有 API 请求在局域网内完成，不经过外部网关 |
-| **🖥️ 跨平台支持** | Windows、macOS、Linux、iOS、Android — 任何支持 HTTP 的设备都能用 |
-| **🔌 即插即用** | 兼容所有 OpenAI SDK 客户端 — Cursor、ChatBox、CherryStudio、Open WebUI |
+| **馃挵 鎴愭湰鍏变韩** | 涓€浠?API Key 璁㈤槄鏈嶅姟鏁翠釜鍥㈤槦锛屾棤闇€涓烘瘡鍙拌澶囧崟鐙喘涔?|
+| **馃攽 闆嗕腑瀵嗛挜绠＄悊** | 涓€澶勬坊鍔?杞崲 API Key锛屾墍鏈夊眬鍩熺綉璁惧鑷姩鐢熸晥 |
+| **馃搵 缁熶竴绛栫暐绠℃帶** | 璺敱瑙勫垯涓€娆″畾涔夛紝鍥㈤槦鎴愬憳鍏变韩鐩稿悓鐨勬櫤鑳借矾鐢辩瓥鐣?|
+| **鈿?闆跺欢杩熷紑閿€** | 灞€鍩熺綉杞彂寤惰繜 <1ms锛屾棤闇€缁忚繃浜戠涓浆 |
+| **馃敀 鏁版嵁闅愮** | 鎵€鏈?API 璇锋眰鍦ㄥ眬鍩熺綉鍐呭畬鎴愶紝涓嶇粡杩囧閮ㄧ綉鍏?|
+| **馃枼锔?璺ㄥ钩鍙版敮鎸?* | Windows銆乵acOS銆丩inux銆乮OS銆丄ndroid 鈥?浠讳綍鏀寔 HTTP 鐨勮澶囬兘鑳界敤 |
+| **馃攲 鍗虫彃鍗崇敤** | 鍏煎鎵€鏈?OpenAI SDK 瀹㈡埛绔?鈥?Cursor銆丆hatBox銆丆herryStudio銆丱pen WebUI |
 
-**典型使用场景：**
-- 团队工作站共享一套 API Key，统一管理
-- 移动设备无需安装 SDK，直接调用 LLM API
-- IoT 设备通过局域网端点集成 AI 能力
-- CI/CD 流水线使用与开发环境相同的路由策略
+**鍏稿瀷浣跨敤鍦烘櫙锛?*
+- 鍥㈤槦宸ヤ綔绔欏叡浜竴濂?API Key锛岀粺涓€绠＄悊
+- 绉诲姩璁惧鏃犻渶瀹夎 SDK锛岀洿鎺ヨ皟鐢?LLM API
+- IoT 璁惧閫氳繃灞€鍩熺綉绔偣闆嗘垚 AI 鑳藉姏
+- CI/CD 娴佹按绾夸娇鐢ㄤ笌寮€鍙戠幆澧冪浉鍚岀殑璺敱绛栫暐
 
 ---
 
-## 功能特性
+## 鍔熻兘鐗规€?
+### 骞冲彴绠＄悊
+- 缁撴瀯鍖栫鐞嗕笂娓稿钩鍙帮紙鍚嶇О銆佸崗璁€佸湴鍧€銆佸浘鏍囷級
+- 涓€閿悳绱㈠浘鏍囷紙鐧惧害/蹇呭簲/鎼滅嫍鍥剧墖锛?- **65+ 鐑棬骞冲彴妯℃澘** 鈥?涓€閿揩閫熸坊鍔?- 鍚敤/绂佺敤鍗曚釜骞冲彴
 
-### 平台管理
-- 结构化管理上游平台（名称、协议、地址、图标）
-- 一键搜索图标（百度/必应/搜狗图片）
-- **65+ 热门平台模板** — 一键快速添加
-- 启用/禁用单个平台
+### API Key 绠＄悊
+- 鎸夊钩鍙板垎缁勭鐞?API Key锛屾敮鎸佸埆鍚?- 瀵嗛挜鍋ュ悍妫€娴嬶紙鏈夋晥/鏃犳晥/鏈祴璇曪級
+- 鎵归噺娴嬭瘯鍏ㄩ儴 Key銆佹壒閲忓垹闄ゆ棤鏁?Key
+- 鏉冮噸璁剧疆锛堢敤浜庡姞鏉冭礋杞藉潎琛★級
+- **鍔犲瘑瀛樺偍** 鈥?Fernet 瀵圭О鍔犲瘑锛屽瘑閽ユ枃浠惰嚜鍔ㄧ敓鎴?
+### 妯″瀷绠＄悊
+- 姣忎釜骞冲彴鐙珛鐨勬ā鍨嬬鐞嗭紝鏀寔璇︾粏灞炴€?- **涓€閿粠涓婃父鍚屾** 鈥?鏅鸿兘鍙傛暟妫€娴嬪拰濉厖
+- **鍚屾寮圭獥浜や簰** 鈥?鏀寔鍏ㄩ€夈€佸弽閫夈€侀€愭潯娣诲姞銆佹壒閲忔坊鍔?- **鍐呯疆宸茬煡妯″瀷鏁版嵁搴?* 鈥?100+ 棰勯厤缃ā鍨嬪弬鏁?- 鑷姩妯″瀷绫诲瀷妫€娴嬶紙鏂囨湰/鍥惧儚/瑙嗛/TTS/宓屽叆锛?
+### 璺敱绛栫暐
 
-### API Key 管理
-- 按平台分组管理 API Key，支持别名
-- 密钥健康检测（有效/无效/未测试）
-- 批量测试全部 Key、批量删除无效 Key
-- 权重设置（用于加权负载均衡）
-- **加密存储** — Fernet 对称加密，密钥文件自动生成
-
-### 模型管理
-- 每个平台独立的模型管理，支持详细属性
-- **一键从上游同步** — 智能参数检测和填充
-- **同步弹窗交互** — 支持全选、反选、逐条添加、批量添加
-- **内置已知模型数据库** — 100+ 预配置模型参数
-- 自动模型类型检测（文本/图像/视频/TTS/嵌入）
-
-### 路由策略
-
-| 策略 | 说明 |
+| 绛栫暐 | 璇存槑 |
 |------|------|
-| **轮询 (Round Robin)** | 按顺序依次轮换规则 |
-| **加权 (Weighted)** | 按权重比例分配流量 |
-| **随机 (Random)** | 随机选择规则 |
-| **故障转移 (Failover)** | 按优先级，失败时自动切换 |
-| **优先级 (Priority)** | 始终使用最高优先级 |
+| **杞 (Round Robin)** | 鎸夐『搴忎緷娆¤疆鎹㈣鍒?|
+| **鍔犳潈 (Weighted)** | 鎸夋潈閲嶆瘮渚嬪垎閰嶆祦閲?|
+| **闅忔満 (Random)** | 闅忔満閫夋嫨瑙勫垯 |
+| **鏁呴殰杞Щ (Failover)** | 鎸変紭鍏堢骇锛屽け璐ユ椂鑷姩鍒囨崲 |
+| **浼樺厛绾?(Priority)** | 濮嬬粓浣跨敤鏈€楂樹紭鍏堢骇 |
 
-### Key 策略
+### Key 绛栫暐
 
-| 策略 | 说明 |
+| 绛栫暐 | 璇存槑 |
 |------|------|
-| **轮询** | 按顺序轮换使用 Key |
-| **随机** | 随机选择 Key |
-| **故障转移** | 使用第一个 Key，失败则切换 |
-| **RPM 阈值** | 每分钟请求数超阈值时自动切换 |
-| **计数阈值** | 总请求数超阈值时自动切换 |
+| **杞** | 鎸夐『搴忚疆鎹娇鐢?Key |
+| **闅忔満** | 闅忔満閫夋嫨 Key |
+| **鏁呴殰杞Щ** | 浣跨敤绗竴涓?Key锛屽け璐ュ垯鍒囨崲 |
+| **RPM 闃堝€?* | 姣忓垎閽熻姹傛暟瓒呴槇鍊兼椂鑷姩鍒囨崲 |
+| **璁℃暟闃堝€?* | 鎬昏姹傛暟瓒呴槇鍊兼椂鑷姩鍒囨崲 |
 
-### 协议支持
-- **OpenAI** — 原生兼容（GPT 系列、o1/o3、DALL-E、TTS、Whisper）
-- **Anthropic Claude** — 自动格式转换（从 OpenAI 格式）
-- **Google Gemini** — 自动格式转换（从 OpenAI 格式）
-- **自定义** — 任何 OpenAI 兼容端点
+### 鍗忚鏀寔
+- **OpenAI** 鈥?鍘熺敓鍏煎锛圙PT 绯诲垪銆乷1/o3銆丏ALL-E銆乀TS銆乄hisper锛?- **Anthropic Claude** 鈥?鑷姩鏍煎紡杞崲锛堜粠 OpenAI 鏍煎紡锛?- **Google Gemini** 鈥?鑷姩鏍煎紡杞崲锛堜粠 OpenAI 鏍煎紡锛?- **鑷畾涔?* 鈥?浠讳綍 OpenAI 鍏煎绔偣
 
-### 可观测性
-- **仪表盘** — 今日请求量、成功率、平均延迟、Token 用量
-- **请求日志** — 完整的搜索筛选请求历史（按策略/平台/状态/时间）
-- **策略测试** — 上线前测试路由链路
-
-### 系统设置
-- 暗色/亮色主题切换
-- **中英文双语界面**
-- **输出协议转换** — 返回 OpenAI / Claude / Gemini 格式
-- **备份与恢复** — 手动/自动备份，支持定时和上传恢复
+### 鍙娴嬫€?- **浠〃鐩?* 鈥?浠婃棩璇锋眰閲忋€佹垚鍔熺巼銆佸钩鍧囧欢杩熴€乀oken 鐢ㄩ噺
+- **璇锋眰鏃ュ織** 鈥?瀹屾暣鐨勬悳绱㈢瓫閫夎姹傚巻鍙诧紙鎸夌瓥鐣?骞冲彴/鐘舵€?鏃堕棿锛?- **绛栫暐娴嬭瘯** 鈥?涓婄嚎鍓嶆祴璇曡矾鐢遍摼璺?
+### 绯荤粺璁剧疆
+- 鏆楄壊/浜壊涓婚鍒囨崲
+- **涓嫳鏂囧弻璇晫闈?*
+- **杈撳嚭鍗忚杞崲** 鈥?杩斿洖 OpenAI / Claude / Gemini 鏍煎紡
+- **澶囦唤涓庢仮澶?* 鈥?鎵嬪姩/鑷姩澶囦唤锛屾敮鎸佸畾鏃跺拰涓婁紶鎭㈠
 
 ---
 
-## 系统架构
+## 绯荤粺鏋舵瀯
 
 ```
-客户端 (OpenAI SDK / 第三方应用)
+瀹㈡埛绔?(OpenAI SDK / 绗笁鏂瑰簲鐢?
   |
-  | POST /v1/chat/completions (model="策略名称")
+  | POST /v1/chat/completions (model="绛栫暐鍚嶇О")
   v
-[proxy.py] -- 根据模型名解析策略
-  |
+[proxy.py] -- 鏍规嵁妯″瀷鍚嶈В鏋愮瓥鐣?  |
   v
-[balancer.py] -- 选择路由规则 + API Key
-  |                (5 种负载均衡策略 / 3 种 Key 策略)
+[balancer.py] -- 閫夋嫨璺敱瑙勫垯 + API Key
+  |                (5 绉嶈礋杞藉潎琛＄瓥鐣?/ 3 绉?Key 绛栫暐)
   v
-[forwarder.py] -- 协议适配 + 发送上游请求
-  |                (OpenAI / Claude / Gemini)
+[forwarder.py] -- 鍗忚閫傞厤 + 鍙戦€佷笂娓歌姹?  |                (OpenAI / Claude / Gemini)
   v
-[protocol_adapter.py] -- 可选输出格式转换
-  |
+[protocol_adapter.py] -- 鍙€夎緭鍑烘牸寮忚浆鎹?  |
   v
-[stream_handler.py] -- SSE 流式处理
+[stream_handler.py] -- SSE 娴佸紡澶勭悊
   |
   v
-客户端 <--- 标准 OpenAI 格式响应
+瀹㈡埛绔?<--- 鏍囧噯 OpenAI 鏍煎紡鍝嶅簲
 ```
 
 ---
 
-## 快速开始
-
-### 环境要求
+## 蹇€熷紑濮?
+### 鐜瑕佹眰
 
 - Python 3.10+
 - Node.js 18+
 
-### 1. 克隆与初始化
+### 1. 鍏嬮殕涓庡垵濮嬪寲
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/licorxj/QM-LocalRouter.git
 cd ApiRouteManeger
 
-# 初始化数据库（自动创建虚环境、安装依赖、创建数据库）
-cd scripts
-python init_db.py        # 跨平台 Python 脚本
-# 或: ./init_db.sh       # Linux/macOS
-# 或: init_db.bat        # Windows
+# 鍒濆鍖栨暟鎹簱锛堣嚜鍔ㄥ垱寤鸿櫄鐜銆佸畨瑁呬緷璧栥€佸垱寤烘暟鎹簱锛?cd scripts
+python init_db.py        # 璺ㄥ钩鍙?Python 鑴氭湰
+# 鎴? ./init_db.sh       # Linux/macOS
+# 鎴? init_db.bat        # Windows
 cd ..
 ```
 
-### 2. 启动服务
+### 2. 鍚姩鏈嶅姟
 
-**方式 A：使用管理脚本（推荐）**
+**鏂瑰紡 A锛氫娇鐢ㄧ鐞嗚剼鏈紙鎺ㄨ崘锛?*
 
 ```bash
 # Linux/macOS
@@ -189,118 +165,112 @@ chmod +x scripts/manage.sh
 scripts\manage.bat start
 ```
 
-**方式 B：手动启动**
+**鏂瑰紡 B锛氭墜鍔ㄥ惎鍔?*
 
 ```bash
-# 终端 1 - 后端
+# 缁堢 1 - 鍚庣
 cd backend
 venv\Scripts\activate        # Windows
 # source venv/bin/activate   # Linux/macOS
 uvicorn app.main:app --host 0.0.0.0 --port 12002
 
-# 终端 2 - 前端
+# 缁堢 2 - 鍓嶇
 cd frontend
 npm install
 npm run dev
 ```
 
-### 3. 使用
+### 3. 浣跨敤
 
-1. 浏览器打开 **http://localhost:12001**
-2. 进入 **平台管理** 页面，点击 **+** 添加平台（或使用 **热门平台** 一键添加）
-3. 在平台下添加 API Key
-4. 添加模型 — 可手动、一键同步、或使用"同步平台模型"弹窗
-5. 进入 **路由策略**，创建策略并添加路由规则
-6. 客户端中设置 `base_url` 为 `http://localhost:12002/v1`，`model` 为策略名称
-
+1. 娴忚鍣ㄦ墦寮€ **http://localhost:12001**
+2. 杩涘叆 **骞冲彴绠＄悊** 椤甸潰锛岀偣鍑?**+** 娣诲姞骞冲彴锛堟垨浣跨敤 **鐑棬骞冲彴** 涓€閿坊鍔狅級
+3. 鍦ㄥ钩鍙颁笅娣诲姞 API Key
+4. 娣诲姞妯″瀷 鈥?鍙墜鍔ㄣ€佷竴閿悓姝ャ€佹垨浣跨敤"鍚屾骞冲彴妯″瀷"寮圭獥
+5. 杩涘叆 **璺敱绛栫暐**锛屽垱寤虹瓥鐣ュ苟娣诲姞璺敱瑙勫垯
+6. 瀹㈡埛绔腑璁剧疆 `base_url` 涓?`http://localhost:12002/v1`锛宍model` 涓虹瓥鐣ュ悕绉?
 ---
 
-## 技术栈
+## 鎶€鏈爤
 
-| 层 | 技术 | 说明 |
+| 灞?| 鎶€鏈?| 璇存槑 |
 |-------|-----------|------|
-| 前端 | React 18 + TypeScript + Vite 5 | 单页应用，快速热更新 |
-| UI | shadcn/ui + Tailwind CSS 3 | 现代无障碍组件库 |
-| 状态管理 | Zustand + TanStack Query 5 | 轻量状态 + 服务端缓存 |
-| 国际化 | 自定义 React Context | 中文 / 英文 |
-| 后端 | Python 3.10+ + FastAPI + uvicorn | 异步高性能 API |
-| 数据库 | SQLite + SQLAlchemy 2.0 (异步) | 零配置本地存储 |
-| 加密 | cryptography (Fernet) | API Key AES-128 加密 |
-| HTTP | httpx (异步) | 上游 API 请求转发 |
+| 鍓嶇 | React 18 + TypeScript + Vite 5 | 鍗曢〉搴旂敤锛屽揩閫熺儹鏇存柊 |
+| UI | shadcn/ui + Tailwind CSS 3 | 鐜颁唬鏃犻殰纰嶇粍浠跺簱 |
+| 鐘舵€佺鐞?| Zustand + TanStack Query 5 | 杞婚噺鐘舵€?+ 鏈嶅姟绔紦瀛?|
+| 鍥介檯鍖?| 鑷畾涔?React Context | 涓枃 / 鑻辨枃 |
+| 鍚庣 | Python 3.10+ + FastAPI + uvicorn | 寮傛楂樻€ц兘 API |
+| 鏁版嵁搴?| SQLite + SQLAlchemy 2.0 (寮傛) | 闆堕厤缃湰鍦板瓨鍌?|
+| 鍔犲瘑 | cryptography (Fernet) | API Key AES-128 鍔犲瘑 |
+| HTTP | httpx (寮傛) | 涓婃父 API 璇锋眰杞彂 |
 
 ---
 
-## API 概览
+## API 姒傝
 
-所有代理端点位于 `/v1/`，与 OpenAI SDK 完全兼容。
-
-| 端点 | 说明 |
+鎵€鏈変唬鐞嗙鐐逛綅浜?`/v1/`锛屼笌 OpenAI SDK 瀹屽叏鍏煎銆?
+| 绔偣 | 璇存槑 |
 |------|------|
-| `POST /v1/chat/completions` | 聊天补全（流式 + 非流式） |
-| `POST /v1/completions` | 文本补全 |
-| `POST /v1/embeddings` | 向量嵌入 |
-| `POST /v1/images/generations` | 图像生成 |
-| `POST /v1/audio/speech` | 语音合成 |
-| `POST /v1/videos` | 视频生成 |
-| `GET /v1/models` | 列出活跃策略 |
+| `POST /v1/chat/completions` | 鑱婂ぉ琛ュ叏锛堟祦寮?+ 闈炴祦寮忥級 |
+| `POST /v1/completions` | 鏂囨湰琛ュ叏 |
+| `POST /v1/embeddings` | 鍚戦噺宓屽叆 |
+| `POST /v1/images/generations` | 鍥惧儚鐢熸垚 |
+| `POST /v1/audio/speech` | 璇煶鍚堟垚 |
+| `POST /v1/videos` | 瑙嗛鐢熸垚 |
+| `GET /v1/models` | 鍒楀嚭娲昏穬绛栫暐 |
 
-管理 API 在 `/api/` 下（Swagger：`http://localhost:12002/docs`）
-
+绠＄悊 API 鍦?`/api/` 涓嬶紙Swagger锛歚http://localhost:12002/docs`锛?
 ---
 
-## 客户端配置
-
-| 客户端 | 配置方式 |
+## 瀹㈡埛绔厤缃?
+| 瀹㈡埛绔?| 閰嶇疆鏂瑰紡 |
 |--------|----------|
-| **OpenAI SDK** | `base_url="http://localhost:12002/v1"`, `api_key="任意值"` |
-| **ChatBox** | 设置 > 自定义 API > Base URL: `http://localhost:12002/v1` |
-| **CherryStudio** | 设置 > 添加自定义 API > Base URL: `http://localhost:12002/v1` |
-| **LobeChat** | 设置 > 添加自定义模型 > API URL: `http://localhost:12002/v1` |
+| **OpenAI SDK** | `base_url="http://localhost:12002/v1"`, `api_key="浠绘剰鍊?` |
+| **ChatBox** | 璁剧疆 > 鑷畾涔?API > Base URL: `http://localhost:12002/v1` |
+| **CherryStudio** | 璁剧疆 > 娣诲姞鑷畾涔?API > Base URL: `http://localhost:12002/v1` |
+| **LobeChat** | 璁剧疆 > 娣诲姞鑷畾涔夋ā鍨?> API URL: `http://localhost:12002/v1` |
 | **Open WebUI** | `OPENAI_API_BASE_URL=http://localhost:12002/v1` |
-| **Cursor** | 设置 > 模型 > Base URL: `http://localhost:12002/v1` |
-| **curl** | 见下方示例 |
+| **Cursor** | 璁剧疆 > 妯″瀷 > Base URL: `http://localhost:12002/v1` |
+| **curl** | 瑙佷笅鏂圭ず渚?|
 
 ```bash
 curl http://localhost:12002/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"my-strategy","messages":[{"role":"user","content":"你好！"}]}'
+  -d '{"model":"my-strategy","messages":[{"role":"user","content":"浣犲ソ锛?}]}'
 ```
 
-> **注意**: `api_key` 可填任意值。`model` 字段必须填策略名称。
-
+> **娉ㄦ剰**: `api_key` 鍙～浠绘剰鍊笺€俙model` 瀛楁蹇呴』濉瓥鐣ュ悕绉般€?
 ---
 
 
-## 文档
+## 鏂囨。
 
-| 文档 | 说明 |
+| 鏂囨。 | 璇存槑 |
 |------|------|
 | [README.md](README.md) | English documentation |
 | [docs/USAGE.md](docs/USAGE.md) | English user guide |
-| [docs/USAGE_ZH.md](docs/USAGE_ZH.md) | 中文使用教程 |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker、VPS、Windows、Linux） |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发者文档 |
-| [docs/API.md](docs/API.md) | API 参考 |
-| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | 依赖清单 |
+| [docs/USAGE_ZH.md](docs/USAGE_ZH.md) | 涓枃浣跨敤鏁欑▼ |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 閮ㄧ讲鎸囧崡锛圖ocker銆乂PS銆乄indows銆丩inux锛?|
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 寮€鍙戣€呮枃妗?|
+| [docs/API.md](docs/API.md) | API 鍙傝€?|
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | 渚濊禆娓呭崟 |
 
 ---
 
-## 联系与支持
-
-如果这个项目对你有帮助，欢迎联系和交流：
+## 鑱旂郴涓庢敮鎸?
+濡傛灉杩欎釜椤圭洰瀵逛綘鏈夊府鍔╋紝娆㈣繋鑱旂郴鍜屼氦娴侊細
 
 <div align="center">
   <table>
     <tr>
       <td align="center">
-        <strong>添加好友 (微信)</strong><br>
-        <img src="docs/images/contact-qr.jpg" width="200" alt="联系二维码"><br>
-        <em>扫码添加好友</em>
+        <strong>娣诲姞濂藉弸 (寰俊)</strong><br>
+        <img src="docs/images/contact-qr.jpg" width="200" alt="鑱旂郴浜岀淮鐮?><br>
+        <em>鎵爜娣诲姞濂藉弸</em>
       </td>
       <td align="center">
-        <strong>打赏支持 (微信/支付宝 支付)</strong><br>
-        <img src="docs/images/donate-qr.png" width="200" alt="打赏二维码"><br>
-        <em>扫码支持项目</em>
+        <strong>鎵撹祻鏀寔 (寰俊/鏀粯瀹?鏀粯)</strong><br>
+        <img src="docs/images/donate-qr.png" width="200" alt="鎵撹祻浜岀淮鐮?><br>
+        <em>鎵爜鏀寔椤圭洰</em>
       </td>
     </tr>
   </table>
@@ -308,6 +278,5 @@ curl http://localhost:12002/v1/chat/completions \
 
 ---
 
-## 许可证
-
+## 璁稿彲璇?
 MIT License

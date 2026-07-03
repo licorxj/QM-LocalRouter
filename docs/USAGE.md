@@ -1,6 +1,6 @@
-# LocalRouter - User Guide
+﻿# LocalRouter - User Guide
 
-> **English** | [中文](USAGE_ZH.md)
+> **English** | [涓枃](USAGE_ZH.md)
 
 ---
 
@@ -69,11 +69,11 @@ The **Providers** page combines provider, API key, and model management in one i
 
 1. Click the **"+"** (Plus) button in the top-right
 2. Fill in:
-   - **Name** — e.g., OpenAI, DeepSeek
-   - **Protocol** — openai / gemini / claude / custom
-   - **Base URL** — With auto-complete, just enter the domain (e.g., `https://api.openai.com`). With it off, enter the full API path
-   - **Homepage** — Optional, the provider's website URL
-   - **Description** — Optional notes
+   - **Name** 鈥?e.g., OpenAI, DeepSeek
+   - **Protocol** 鈥?openai / gemini / claude / custom
+   - **Base URL** 鈥?With auto-complete, just enter the domain (e.g., `https://api.openai.com`). With it off, enter the full API path
+   - **Homepage** 鈥?Optional, the provider's website URL
+   - **Description** 鈥?Optional notes
 3. Click **Save**
 
 ### Hot Provider Quick-Add
@@ -87,7 +87,7 @@ The **Providers** page combines provider, API key, and model management in one i
 
 - Click **"Search Icon"** in the add/edit dialog
 - Enter keywords to search (e.g., "openai")
-- Select from the 3×3 image grid
+- Select from the 3脳3 image grid
 - Supports Baidu, Bing, and Sogou image search engines
 
 ### Protocol Reference
@@ -123,8 +123,8 @@ After selecting a provider, the right panel shows its API keys in the top sectio
 
 ### Batch Operations
 
-- **Test All** — Check all keys at once against the upstream API
-- **Delete Invalid** — Remove all keys with "Invalid" status
+- **Test All** 鈥?Check all keys at once against the upstream API
+- **Delete Invalid** 鈥?Remove all keys with "Invalid" status
 
 ### Copy Key
 
@@ -144,14 +144,14 @@ The right panel's bottom section shows models for the selected provider.
 
 1. Click **"Add Model"**
 2. Fill in:
-   - **Model ID** — Upstream model name (e.g., `gpt-4o`, `claude-3-opus`)
-   - **Display Name** — Optional friendly name
-   - **Model Type** — Text / Image / Video / TTS / Embedding
-   - **Multimodal** — Toggle if model supports image/audio/video input
-   - **Context Window** — Max tokens (preset options: 4K/8K/16K/32K/64K/128K/200K/1M)
-   - **Temperature** — Default temperature (0–2)
-   - **Input Price** — Price per million input tokens
-   - **Output Price** — Price per million output tokens
+   - **Model ID** 鈥?Upstream model name (e.g., `gpt-4o`, `claude-3-opus`)
+   - **Display Name** 鈥?Optional friendly name
+   - **Model Type** 鈥?Text / Image / Video / TTS / Embedding
+   - **Multimodal** 鈥?Toggle if model supports image/audio/video input
+   - **Context Window** 鈥?Max tokens (preset options: 4K/8K/16K/32K/64K/128K/200K/1M)
+   - **Temperature** 鈥?Default temperature (0鈥?)
+   - **Input Price** 鈥?Price per million input tokens
+   - **Output Price** 鈥?Price per million output tokens
 3. Save
 
 ### Sync from Upstream
@@ -176,7 +176,7 @@ Click the **"Sync Provider Models"** button in the Models section toolbar.
 
 ### Dialog Features
 
-- **Model List** — Displays each model with:
+- **Model List** 鈥?Displays each model with:
   - Checkbox for selection
   - Model ID (with copy button)
   - Display name
@@ -185,11 +185,11 @@ Click the **"Sync Provider Models"** button in the Models section toolbar.
   - Context window
   - Input/Output pricing
   - Individual **Add** button
-- **Already Added** — Models already in your database are shown with 50% opacity and an "Added" badge
-- **Select All** — Selects all addable models at once
-- **Invert** — Inverts the current selection
-- **Batch Add** — Adds all selected models with one click
-- **Selection Count** — Shows how many models are currently selected
+- **Already Added** 鈥?Models already in your database are shown with 50% opacity and an "Added" badge
+- **Select All** 鈥?Selects all addable models at once
+- **Invert** 鈥?Inverts the current selection
+- **Batch Add** 鈥?Adds all selected models with one click
+- **Selection Count** 鈥?Shows how many models are currently selected
 
 ### Adding Models
 
@@ -214,18 +214,18 @@ Routing strategies define how requests are forwarded to upstream providers.
 3. Fill in:
 
 **Basic Info:**
-- **Strategy Name** — Used as the `model` field in client requests
-- **Load Balancing** — Choose the balancing method
-- **Description** — Optional notes
+- **Strategy Name** 鈥?Used as the `model` field in client requests
+- **Load Balancing** 鈥?Choose the balancing method
+- **Description** 鈥?Optional notes
 
 **Key Strategy:**
-- **Key Selection** — How to choose API keys (Round Robin / Random / Failover)
-- **Key Switch Trigger** — None / RPM threshold / Count threshold
+- **Key Selection** 鈥?How to choose API keys (Round Robin / Random / Failover)
+- **Key Switch Trigger** 鈥?None / RPM threshold / Count threshold
 
 **Advanced:**
-- **Timeout** — Request timeout in seconds (default 120)
-- **Retry Count** — Number of retries on failure (default 2)
-- **Enable** — Toggle strategy on/off
+- **Timeout** 鈥?Request timeout in seconds (default 120)
+- **Retry Count** 鈥?Number of retries on failure (default 2)
+- **Enable** 鈥?Toggle strategy on/off
 
 4. **Add Routing Rules**: Select provider + model, set priority and weight, click "Add"
 5. Click **"Create"**
@@ -341,10 +341,10 @@ The **Request Logs** page shows all proxied requests.
 ### Filtering
 
 Filter the log list by:
-- **Strategy** — Show only specific strategy
-- **Provider** — Filter by upstream provider
-- **Status** — Status code filter
-- **Time Range** — Custom date/time range
+- **Strategy** 鈥?Show only specific strategy
+- **Provider** 鈥?Filter by upstream provider
+- **Status** 鈥?Status code filter
+- **Time Range** 鈥?Custom date/time range
 
 ---
 
@@ -352,10 +352,10 @@ Filter the log list by:
 
 The **Dashboard** provides a global overview:
 
-- **Today's Requests** — Total count, success rate, average latency
-- **Token Usage** — Prompt tokens, completion tokens, total tokens
-- **Active Resources** — Strategies, providers, and keys in use
-- **Service Status** — Backend service running indicator
+- **Today's Requests** 鈥?Total count, success rate, average latency
+- **Token Usage** 鈥?Prompt tokens, completion tokens, total tokens
+- **Active Resources** 鈥?Strategies, providers, and keys in use
+- **Service Status** 鈥?Backend service running indicator
 
 ---
 
@@ -364,14 +364,14 @@ The **Dashboard** provides a global overview:
 The **Settings** page (gear icon in sidebar) provides:
 
 ### Network Access
-- **Enable LAN Access** — Toggle to allow other devices on the same local network to access LocalRouter
+- **Enable LAN Access** 鈥?Toggle to allow other devices on the same local network to access LocalRouter
 - When enabled, the actual LAN IP address is auto-detected and displayed
 - Use the displayed LAN address (e.g., `http://192.168.1.100:12002/v1`) from other devices on your network
 - The proxy address and curl example in the Proxy Configuration section update automatically based on this setting
 
 ### Appearance
-- **Theme** — Dark / Light mode
-- **Language** — Chinese / English
+- **Theme** 鈥?Dark / Light mode
+- **Language** 鈥?Chinese / English
 
 ### Proxy Configuration
 - Displays the proxy address to configure in your client
@@ -380,12 +380,12 @@ The **Settings** page (gear icon in sidebar) provides:
 ### Output Protocol
 | Mode | Description |
 |------|-------------|
-| **OpenAI Format** | Default — compatible with most clients |
+| **OpenAI Format** | Default 鈥?compatible with most clients |
 | **Claude Format** | Anthropic Messages API format |
 | **Gemini Format** | Gemini GenerateContent format |
 
 ### Route Management
-- **Default Model** — Default model for router management (leave empty for strategy-based routing)
+- **Default Model** 鈥?Default model for router management (leave empty for strategy-based routing)
 
 ### Backup & Restore
 
@@ -428,7 +428,7 @@ Click **"Create Backup Now"** to create an immediate backup.
 ### Q: Are API keys secure?
 - Keys are encrypted with Fernet symmetric encryption (AES-128)
 - Stored in a local SQLite database
-- The system runs locally only — no public exposure
+- The system runs locally only 鈥?no public exposure
 
 ### Q: How to backup my data?
 - Use the **Settings > Backup & Restore** page

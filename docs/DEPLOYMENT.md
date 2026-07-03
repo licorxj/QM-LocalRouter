@@ -1,4 +1,4 @@
-# LocalRouter - Deployment Guide
+﻿# LocalRouter - Deployment Guide
 
 This guide covers deploying LocalRouter on various platforms.
 
@@ -36,7 +36,7 @@ For Docker deployment, only Docker is needed.
 ### Step 1: Clone
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/licorxj/QM-LocalRouter.git
 cd ApiRouteManeger
 ```
 
@@ -58,7 +58,7 @@ This script will:
 
 ### Step 3: Start Services
 
-**Option A — Management script (recommended):**
+**Option A 鈥?Management script (recommended):**
 
 ```bash
 # Linux/macOS
@@ -69,7 +69,7 @@ chmod +x scripts/manage.sh
 scripts\manage.bat start
 ```
 
-**Option B — Manual:**
+**Option B 鈥?Manual:**
 
 ```bash
 # Terminal 1: Backend
@@ -257,7 +257,7 @@ scripts\manage.bat start
 
 ```cmd
 :: Clone and setup
-git clone <repo-url>
+git clone https://github.com/licorxj/QM-LocalRouter.git
 cd ApiRouteManeger
 
 :: Initialize
@@ -282,9 +282,9 @@ For Windows Server with IIS:
 
 1. Install URL Rewrite and Application Request Routing (ARR)
 2. Add reverse proxy rules:
-   - `/api/*` → `http://localhost:12002/api/*`
-   - `/v1/*` → `http://localhost:12002/v1/*`
-   - `/` → `http://localhost:12001/`
+   - `/api/*` 鈫?`http://localhost:12002/api/*`
+   - `/v1/*` 鈫?`http://localhost:12002/v1/*`
+   - `/` 鈫?`http://localhost:12001/`
 
 ---
 
@@ -292,7 +292,7 @@ For Windows Server with IIS:
 
 ```bash
 # Clone and setup
-git clone <repo-url>
+git clone https://github.com/licorxj/QM-LocalRouter.git
 cd ApiRouteManeger
 
 # Initialize
@@ -349,7 +349,7 @@ sudo chown localrouter:localrouter /opt/localrouter
 ### Step 2: Clone & Setup
 
 ```bash
-sudo -u localrouter git clone <repo-url> /opt/localrouter
+sudo -u localrouter git clone https://github.com/licorxj/QM-LocalRouter.git /opt/localrouter
 cd /opt/localrouter
 
 # Initialize
@@ -505,5 +505,5 @@ cp backend/data/app.db backend/data/app.db.bak
 
 # Reset database (WARNING: Deletes all data)
 rm backend/data/app.db
-# Then restart the backend — it will recreate the database
+# Then restart the backend 鈥?it will recreate the database
 ```

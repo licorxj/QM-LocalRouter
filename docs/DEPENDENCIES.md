@@ -1,4 +1,4 @@
-# LocalRouter - Dependencies
+﻿# LocalRouter - Dependencies
 
 ## System Requirements
 
@@ -32,9 +32,9 @@ Source: `backend/requirements.txt`
 
 These are included automatically with `uvicorn[standard]`:
 
-- `uvloop` — Fast event loop (Linux only)
-- `httptools` — Fast HTTP parser
-- `websockets` — WebSocket support (for future features)
+- `uvloop` 鈥?Fast event loop (Linux only)
+- `httptools` 鈥?Fast HTTP parser
+- `websockets` 鈥?WebSocket support (for future features)
 
 ---
 
@@ -55,15 +55,15 @@ Source: `frontend/package.json`
 | **clsx** | ^2.1.0 | Conditional className utility |
 | **tailwind-merge** | ^2.5.0 | Tailwind class merging without conflicts |
 | **class-variance-authority** | ^0.7.0 | Type-safe component variants |
-| **@radix-ui/react-slot** | ^1.1.0 | Radix UI primitive — Slot |
-| **@radix-ui/react-dialog** | ^1.1.0 | Radix UI primitive — Dialog/Modal |
-| **@radix-ui/react-dropdown-menu** | ^2.1.0 | Radix UI primitive — Dropdown Menu |
-| **@radix-ui/react-select** | ^2.1.0 | Radix UI primitive — Select |
-| **@radix-ui/react-switch** | ^1.1.0 | Radix UI primitive — Switch/Toggle |
-| **@radix-ui/react-tabs** | ^1.1.0 | Radix UI primitive — Tabs |
-| **@radix-ui/react-tooltip** | ^1.1.0 | Radix UI primitive — Tooltip |
-| **@radix-ui/react-label** | ^2.1.0 | Radix UI primitive — Label |
-| **@radix-ui/react-separator** | ^1.1.0 | Radix UI primitive — Separator |
+| **@radix-ui/react-slot** | ^1.1.0 | Radix UI primitive 鈥?Slot |
+| **@radix-ui/react-dialog** | ^1.1.0 | Radix UI primitive 鈥?Dialog/Modal |
+| **@radix-ui/react-dropdown-menu** | ^2.1.0 | Radix UI primitive 鈥?Dropdown Menu |
+| **@radix-ui/react-select** | ^2.1.0 | Radix UI primitive 鈥?Select |
+| **@radix-ui/react-switch** | ^1.1.0 | Radix UI primitive 鈥?Switch/Toggle |
+| **@radix-ui/react-tabs** | ^1.1.0 | Radix UI primitive 鈥?Tabs |
+| **@radix-ui/react-tooltip** | ^1.1.0 | Radix UI primitive 鈥?Tooltip |
+| **@radix-ui/react-label** | ^2.1.0 | Radix UI primitive 鈥?Label |
+| **@radix-ui/react-separator** | ^1.1.0 | Radix UI primitive 鈥?Separator |
 | **lucide-react** | ^0.441.0 | Icon library |
 | **recharts** | ^2.13.0 | Charting library (Dashboard) |
 
@@ -86,22 +86,20 @@ Source: `frontend/package.json`
 
 ```
 LocalRouter
-├── Backend (Python 3.10+)
-│   ├── fastapi ─── uvicorn ─── httptools
-│   │   └── pydantic ─── pydantic-settings ─── python-dotenv
-│   ├── sqlalchemy[asyncio] ─── aiosqlite
-│   ├── httpx ─── HTTP forwarding
-│   └── cryptography ─── Fernet encryption
-│
-├── Frontend (Node.js 18+)
-│   ├── react ─── react-dom ─── react-router-dom
-│   ├── @tanstack/react-query ─── axios
-│   ├── zustand ─── state management
-│   ├── shadcn/ui (Radix primitives + Tailwind)
-│   │   └── @radix-ui/* (dialog, select, switch, tabs, etc.)
-│   └── vite ─── typescript
-│       └── tailwindcss ─── postcss ─── autoprefixer
-│
-└── Database
-    └── SQLite (zero-config, file-based)
+鈹溾攢鈹€ Backend (Python 3.10+)
+鈹?  鈹溾攢鈹€ fastapi 鈹€鈹€鈹€ uvicorn 鈹€鈹€鈹€ httptools
+鈹?  鈹?  鈹斺攢鈹€ pydantic 鈹€鈹€鈹€ pydantic-settings 鈹€鈹€鈹€ python-dotenv
+鈹?  鈹溾攢鈹€ sqlalchemy[asyncio] 鈹€鈹€鈹€ aiosqlite
+鈹?  鈹溾攢鈹€ httpx 鈹€鈹€鈹€ HTTP forwarding
+鈹?  鈹斺攢鈹€ cryptography 鈹€鈹€鈹€ Fernet encryption
+鈹?鈹溾攢鈹€ Frontend (Node.js 18+)
+鈹?  鈹溾攢鈹€ react 鈹€鈹€鈹€ react-dom 鈹€鈹€鈹€ react-router-dom
+鈹?  鈹溾攢鈹€ @tanstack/react-query 鈹€鈹€鈹€ axios
+鈹?  鈹溾攢鈹€ zustand 鈹€鈹€鈹€ state management
+鈹?  鈹溾攢鈹€ shadcn/ui (Radix primitives + Tailwind)
+鈹?  鈹?  鈹斺攢鈹€ @radix-ui/* (dialog, select, switch, tabs, etc.)
+鈹?  鈹斺攢鈹€ vite 鈹€鈹€鈹€ typescript
+鈹?      鈹斺攢鈹€ tailwindcss 鈹€鈹€鈹€ postcss 鈹€鈹€鈹€ autoprefixer
+鈹?鈹斺攢鈹€ Database
+    鈹斺攢鈹€ SQLite (zero-config, file-based)
 ```
