@@ -24,6 +24,7 @@
 - **🤖 Multi-Model Auto Scheduling** — Automatically route to the best available model based on strategy rules
 - **🛡️ Protocol Auto-Conversion** — Seamless conversion between OpenAI, Claude, and Gemini formats — use any SDK to call any model
 - **🔒 Zero Public Exposure** — Runs entirely on your local machine; no data leaves your network
+- **🌐 LAN Sharing** — Once deployed, all devices on your local network can share API keys and strategies through a single access point
 
 ---
 
@@ -41,6 +42,28 @@ Managing multiple LLM providers is painful. Each has its own API format, billing
 | Rate limiting | Multi-key rotation with intelligent switching |
 | Format differences | Auto-convert between OpenAI/Claude/Gemini |
 | Model discoverability | One-click sync from upstream + built-in model database |
+
+---
+
+## 🌐 LAN Network Advantages
+
+LocalRouter is designed for **local area network (LAN)** deployment from day one. Once you enable LAN access in Settings, every device on your network benefits:
+
+| Advantage | Description |
+|-----------|-------------|
+| **💰 Cost Sharing** | One API key subscription serves your entire team — no per-device licensing |
+| **🔑 Centralized Key Management** | Add/rotate API keys in one place, all LAN devices use them automatically |
+| **📋 Unified Strategy Control** | Define routing rules once, all team members share the same intelligent routing |
+| **⚡ Zero Latency Overhead** | Local network forwarding adds <1ms — no cloud relay delays |
+| **🔒 Data Privacy** | All API requests stay within your LAN; no data passes through external gateways |
+| **🖥️ Cross-Platform** | Windows, macOS, Linux, iOS, Android — any device with an HTTP client works |
+| **🔌 Plug-and-Play** | Compatible with all OpenAI SDK clients — Cursor, ChatBox, CherryStudio, Open WebUI |
+
+**Typical use cases:**
+- Team shares one set of API keys across all workstations
+- Mobile devices access LLM APIs without installing SDKs
+- IoT devices integrate AI capabilities through a local endpoint
+- CI/CD pipelines use the same routing strategy as development
 
 ---
 
