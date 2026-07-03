@@ -1,4 +1,5 @@
 import json
+import socket
 from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -13,12 +14,14 @@ DEFAULTS = {
     "output_protocol": "openai",
     "default_model": "",
     "default_provider_id": 0,
+    "lan_access": False,
 }
 
 class AppSettings(BaseModel):
     output_protocol: str = "openai"
     default_model: str = ""
     default_provider_id: int = 0
+    lan_access: bool = False
 
 def _get_settings() -> dict:
     if SETTINGS_PATH.exists():
@@ -36,6 +39,24 @@ def _save_settings(data: dict):
 def get_output_protocol() -> str:
     return _get_settings().get("output_protocol", "openai")
 
+def get_lan_ip() -> str:
+    """Detect the LAN IP address of this machine."""
+    try:
+        # Try to connect to a known external address to determine the active interface
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        pass
+    # Fallback: try hostname resolution
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "127.0.0.1"
+
 @router.get("")
 async def get_settings():
     return _get_settings()
@@ -46,3 +67,7 @@ async def update_settings(data: AppSettings):
     current.update(data.model_dump(exclude_unset=True))
     _save_settings(current)
     return current
+
+@router.get("/lan-ip")
+async def lan_ip():
+    return {"ip": get_lan_ip()}

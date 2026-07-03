@@ -70,7 +70,12 @@
         "defaultModelDesc": "Default model for the router. Leave empty to use strategy models.",
         "defaultModelPlaceholder": "Enter default model name",
         "selectProvider": "Select Provider",
-        "selectModel": "Select Model"
+        "selectModel": "Select Model",
+        "networkAccess": "Network Access",
+        "lanAccess": "Enable LAN Access",
+        "lanAccessDesc": "Allow other devices on the same network to access LocalRouter",
+        "lanAddress": "LAN Address",
+        "lanAddressDesc": "Use this address from other devices on your network"
     },
     "common": {
         "save": "Save",

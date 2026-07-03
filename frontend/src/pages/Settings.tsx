@@ -3,7 +3,7 @@ import { useI18n, LOCALES } from "../i18n";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getSettings, updateSettings, getProviders, getModels, getBackupConfig, updateBackupConfig, createBackup,
-  listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl,
+  listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl, getLanIp,
 } from "../services/api";
 import { toast } from "../stores/toast";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -22,7 +22,12 @@ export default function SettingsPage() {
   const [backing, setBacking] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null);
-  const [appSettings, setAppSettings] = useState({ output_protocol: "openai", default_model: "", default_provider_id: 0 });
+  const [appSettings, setAppSettings] = useState({ output_protocol: "openai", default_model: "", default_provider_id: 0, lan_access: false });
+  const [lanIp, setLanIp] = useState("");
+
+  useEffect(() => {
+    getLanIp().then(r => setLanIp(r.data.ip)).catch(() => {});
+  }, []);
 
   const toggleTheme = () => {
     const next = !dark;
@@ -128,6 +133,8 @@ export default function SettingsPage() {
   };
 
   const formatDate = (iso: string) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+  const proxyUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:12002/v1` : "http://127.0.0.1:12002/v1";
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -245,6 +252,40 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Network Access */}
+      <Card className="card-hover">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2"><Globe className="h-4 w-4 text-blue-400" /><CardTitle className="text-base">{t("settings.networkAccess")}</CardTitle></div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-medium">{t("settings.lanAccess")}</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">{t("settings.lanAccessDesc")}</p>
+            </div>
+            <Switch checked={appSettings.lan_access} onCheckedChange={(v) => setAppSettings({ ...appSettings, lan_access: v })} />
+          </div>
+          {appSettings.lan_access && lanIp && (
+            <div className="mt-4 pt-4 border-t">
+              <Label className="text-sm font-medium">{t("settings.lanAddress")}</Label>
+              <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.lanAddressDesc")}</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{proxyUrl}</code>
+                <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyCode(proxyUrl)}>
+                  {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end mt-4">
+            <Button size="sm" onClick={() => saveSettingsMut.mutate()} disabled={saveSettingsMut.isPending}>
+              {saveSettingsMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+              {t("common.save")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Proxy Configuration */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
@@ -255,22 +296,27 @@ export default function SettingsPage() {
             <Label className="text-sm font-medium">{t("settings.proxyAddress")}</Label>
             <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.proxyAddressDesc")}</p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">http://127.0.0.1:12002/v1</code>
-              <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyCode("http://127.0.0.1:12002/v1")}>
+              <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{proxyUrl}</code>
+              <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyCode(proxyUrl)}>
                 {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
             <p className="text-xs text-muted-foreground mt-2">{t("settings.proxyUsageDesc")}</p>
+            {appSettings.lan_access && lanIp && (
+              <p className="text-xs text-muted-foreground mt-2">
+                <span className="text-green-400 font-medium">LAN:</span> {t("settings.lanAddressDesc")}: <code className="bg-muted px-1 rounded">{proxyUrl}</code>
+              </p>
+            )}
           </div>
           <Separator />
           <div>
             <Label className="text-sm font-medium">{t("settings.callExample")}</Label>
             <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.callExampleDesc")}</p>
             <div className="relative">
-              <pre className="text-xs bg-muted p-4 rounded-lg overflow-x-auto text-foreground font-mono leading-relaxed">{`curl http://127.0.0.1:12002/v1/chat/completions \\
+              <pre className="text-xs bg-muted p-4 rounded-lg overflow-x-auto text-foreground font-mono leading-relaxed">{`curl ${proxyUrl}/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model": "your-strategy", "messages": [{"role": "user", "content": "Hello"}]}'`}</pre>
-              <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7" onClick={() => copyCode("curl http://127.0.0.1:12002/v1/chat/completions")}>
+              <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7" onClick={() => copyCode(`curl ${proxyUrl}/chat/completions`)}>
                 <Copy className="h-3 w-3" />
               </Button>
             </div>

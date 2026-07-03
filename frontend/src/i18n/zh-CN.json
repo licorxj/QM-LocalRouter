@@ -70,7 +70,12 @@
         "defaultModelDesc": "用于管理路由器的默认模型，留空则使用策略模型",
         "defaultModelPlaceholder": "输入默认模型名",
         "selectProvider": "选择平台",
-        "selectModel": "选择模型"
+        "selectModel": "选择模型",
+        "networkAccess": "网络访问",
+        "lanAccess": "开启局域网访问",
+        "lanAccessDesc": "允许同一局域网内的其他设备访问 LocalRouter",
+        "lanAddress": "局域网地址",
+        "lanAddressDesc": "局域网内其他设备使用时填写的地址"
     },
     "common": {
         "save": "保存",

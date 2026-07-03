@@ -67,6 +67,7 @@ export const downloadBackupUrl = (filename: string) => '/api/backup/download/' +
 // App Settings
 export const getSettings = () => api.get("/api/settings");
 export const updateSettings = (data: any) => api.put("/api/settings", data);
+export const getLanIp = () => api.get("/api/settings/lan-ip");
 
 // Conversations
 export const getConversations = () => api.get('/api/conversations');

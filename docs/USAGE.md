@@ -363,6 +363,12 @@ The **Dashboard** provides a global overview:
 
 The **Settings** page (gear icon in sidebar) provides:
 
+### Network Access
+- **Enable LAN Access** — Toggle to allow other devices on the same local network to access LocalRouter
+- When enabled, the actual LAN IP address is auto-detected and displayed
+- Use the displayed LAN address (e.g., `http://192.168.1.100:12002/v1`) from other devices on your network
+- The proxy address and curl example in the Proxy Configuration section update automatically based on this setting
+
 ### Appearance
 - **Theme** — Dark / Light mode
 - **Language** — Chinese / English

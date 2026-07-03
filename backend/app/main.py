@@ -1,11 +1,47 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 from contextlib import asynccontextmanager
 from app.config import settings
 from app.database import init_db
 from app.routers import providers, api_keys, models, strategies, logs, dashboard, proxy, icons, backup, conversations
-from app.routers.settings import router as settings_router
+from app.routers.settings import router as settings_router, _get_settings
 from app.routers import providers, api_keys, models, strategies, logs, dashboard, proxy, icons, backup, conversations, service
+
+
+class DynamicCORSMiddleware(BaseHTTPMiddleware):
+    """CORS middleware that reads lan_access setting dynamically."""
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        app_settings = _get_settings()
+        lan_access = app_settings.get("lan_access", False)
+
+        # Preflight
+        if request.method == "OPTIONS":
+            response = Response()
+            if lan_access or not origin:
+                response.headers["Access-Control-Allow-Origin"] = "*"
+            elif origin in settings.CORS_ORIGINS:
+                response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            return response
+
+        response = await call_next(request)
+
+        if lan_access or not origin:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        elif origin in settings.CORS_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+
+        return response
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,13 +60,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(DynamicCORSMiddleware)
 
 # Management APIs
 app.include_router(providers.router)
