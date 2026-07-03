@@ -1,0 +1,5 @@
+{
+  "output_protocol": "openai",
+  "default_model": "mimo-v2-flash",
+  "default_provider_id": 16
+}

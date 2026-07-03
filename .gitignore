@@ -1,0 +1,64 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+*.egg
+
+# === Virtual Environment ===
+venv/
+.venv/
+env/
+.env/
+
+# === Node.js ===
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+
+# === Database (runtime data, not templates) ===
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# === Backups ===
+backend/data/backups/
+*.bak
+*.backup
+
+# === IDE / Editor ===
+.trae/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+logs/
+
+# === Environment Files (local config only) ===
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# === Generated / Scratch files ===
+*_gen.py
+gen_*.py
+*.bak.json
+
+# === Encryption Key (auto-generated) ===
+backend/data/.encryption_key
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+desktop.ini
