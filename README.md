@@ -1,8 +1,8 @@
-﻿# LocalRouter
+# LocalRouter
 
-> **Your Local LLM API Routing Manager** | 浣犵殑鏈湴 API 璺敱绠″
+> **Your Local LLM API Routing Manager** | 你的本地 API 路由管家
 
-> **English** | [涓枃](README_ZH.md)
+> **English** | [中文](README_ZH.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -18,13 +18,13 @@
 
 ## Highlights
 
-- **鈿?Local One-Stop Management** 鈥?Centrally manage all your upstream AI providers (OpenAI, Anthropic, Google Gemini, DeepSeek, and 50+ more) in one local dashboard
-- **馃攧 Multi-Strategy Intelligent Routing** 鈥?5 load-balancing strategies (Round Robin, Weighted, Random, Failover, Priority) with automatic failover
-- **馃攽 Multi-Key Load Balancing** 鈥?Distribute requests across multiple API keys per provider with RPM/count threshold switching
-- **馃 Multi-Model Auto Scheduling** 鈥?Automatically route to the best available model based on strategy rules
-- **馃洝锔?Protocol Auto-Conversion** 鈥?Seamless conversion between OpenAI, Claude, and Gemini formats 鈥?use any SDK to call any model
-- **馃敀 Zero Public Exposure** 鈥?Runs entirely on your local machine; no data leaves your network
-- **馃寪 LAN Sharing** 鈥?Once deployed, all devices on your local network can share API keys and strategies through a single access point
+- **⚡ Local One-Stop Management** — Centrally manage all your upstream AI providers (OpenAI, Anthropic, Google Gemini, DeepSeek, and 50+ more) in one local dashboard
+- **🔄 Multi-Strategy Intelligent Routing** — 5 load-balancing strategies (Round Robin, Weighted, Random, Failover, Priority) with automatic failover
+- **🔑 Multi-Key Load Balancing** — Distribute requests across multiple API keys per provider with RPM/count threshold switching
+- **🤖 Multi-Model Auto Scheduling** — Automatically route to the best available model based on strategy rules
+- **🛡️ Protocol Auto-Conversion** — Seamless conversion between OpenAI, Claude, and Gemini formats — use any SDK to call any model
+- **🔒 Zero Public Exposure** — Runs entirely on your local machine; no data leaves your network
+- **🌐 LAN Sharing** — Once deployed, all devices on your local network can share API keys and strategies through a single access point
 
 ---
 
@@ -45,19 +45,19 @@ Managing multiple LLM providers is painful. Each has its own API format, billing
 
 ---
 
-## 馃寪 LAN Network Advantages
+## 🌐 LAN Network Advantages
 
 LocalRouter is designed for **local area network (LAN)** deployment from day one. Once you enable LAN access in Settings, every device on your network benefits:
 
 | Advantage | Description |
 |-----------|-------------|
-| **馃挵 Cost Sharing** | One API key subscription serves your entire team 鈥?no per-device licensing |
-| **馃攽 Centralized Key Management** | Add/rotate API keys in one place, all LAN devices use them automatically |
-| **馃搵 Unified Strategy Control** | Define routing rules once, all team members share the same intelligent routing |
-| **鈿?Zero Latency Overhead** | Local network forwarding adds <1ms 鈥?no cloud relay delays |
-| **馃敀 Data Privacy** | All API requests stay within your LAN; no data passes through external gateways |
-| **馃枼锔?Cross-Platform** | Windows, macOS, Linux, iOS, Android 鈥?any device with an HTTP client works |
-| **馃攲 Plug-and-Play** | Compatible with all OpenAI SDK clients 鈥?Cursor, ChatBox, CherryStudio, Open WebUI |
+| **💰 Cost Sharing** | One API key subscription serves your entire team — no per-device licensing |
+| **🔑 Centralized Key Management** | Add/rotate API keys in one place, all LAN devices use them automatically |
+| **📋 Unified Strategy Control** | Define routing rules once, all team members share the same intelligent routing |
+| **⚡ Zero Latency Overhead** | Local network forwarding adds <1ms — no cloud relay delays |
+| **🔒 Data Privacy** | All API requests stay within your LAN; no data passes through external gateways |
+| **🖥️ Cross-Platform** | Windows, macOS, Linux, iOS, Android — any device with an HTTP client works |
+| **🔌 Plug-and-Play** | Compatible with all OpenAI SDK clients — Cursor, ChatBox, CherryStudio, Open WebUI |
 
 **Typical use cases:**
 - Team shares one set of API keys across all workstations
@@ -80,7 +80,7 @@ LocalRouter is designed for **local area network (LAN)** deployment from day one
 - Key health detection (active/inactive/untested) via automatic testing
 - Batch test all keys, batch delete invalid keys
 - Weighted distribution for load balancing
-- **Encrypted storage** 鈥?keys encrypted at rest using Fernet symmetric encryption
+- **Encrypted storage** — keys encrypted at rest using Fernet symmetric encryption
 
 ### Model Management
 - Per-provider model management with detailed attributes
@@ -108,21 +108,21 @@ LocalRouter is designed for **local area network (LAN)** deployment from day one
 | **Count Threshold** | Auto-switch when total requests exceed threshold |
 
 ### Protocol Support
-- **OpenAI** 鈥?Native compatibility (GPT, o1, o3 series, DALL-E, TTS, Whisper)
-- **Anthropic Claude** 鈥?Automatic format conversion from OpenAI format
-- **Google Gemini** 鈥?Automatic format conversion from OpenAI format
-- **Custom** 鈥?Any OpenAI-compatible endpoint
+- **OpenAI** — Native compatibility (GPT, o1, o3 series, DALL-E, TTS, Whisper)
+- **Anthropic Claude** — Automatic format conversion from OpenAI format
+- **Google Gemini** — Automatic format conversion from OpenAI format
+- **Custom** — Any OpenAI-compatible endpoint
 
 ### Observability
-- **Dashboard** 鈥?Today's request stats, success rate, latency, token usage
-- **Request Logs** 鈥?Full searchable request history with filters by strategy/provider/status
-- **Strategy Testing** 鈥?Test routing chains before production use
+- **Dashboard** — Today's request stats, success rate, latency, token usage
+- **Request Logs** — Full searchable request history with filters by strategy/provider/status
+- **Strategy Testing** — Test routing chains before production use
 
 ### Settings
 - Dark/Light theme
-- **Bilingual UI** 鈥?Chinese and English
-- **Output Protocol** 鈥?Return responses in OpenAI, Claude, or Gemini format
-- **Backup & Restore** 鈥?Manual/auto backup with configurable scheduling
+- **Bilingual UI** — Chinese and English
+- **Output Protocol** — Return responses in OpenAI, Claude, or Gemini format
+- **Backup & Restore** — Manual/auto backup with configurable scheduling
 
 ---
 
@@ -164,7 +164,7 @@ Client <--- Standard OpenAI format response
 
 ```bash
 git clone https://github.com/licorxj/QM-LocalRouter.git
-cd ApiRouteManeger
+cd QM-LocalRouter
 
 # Initialize database (creates venv, installs deps, creates database)
 cd scripts
@@ -207,7 +207,7 @@ npm run dev
 1. Open **http://localhost:12001** in your browser
 2. Go to **Providers** page, click **+** to add a provider (or use **Hot Providers**)
 3. Add an API key under the provider
-4. Add models 鈥?either manually, via **Sync**, or use the **Sync Provider Models** dialog
+4. Add models — either manually, via **Sync**, or use the **Sync Provider Models** dialog
 5. Go to **Strategies**, create a strategy with routing rules
 6. In your client, set `base_url` to `http://localhost:12002/v1` and `model` to your strategy name
 
@@ -274,9 +274,9 @@ curl http://localhost:12002/v1/chat/completions \
 
 | Document | Description |
 |----------|-------------|
-| [README_ZH.md](README_ZH.md) | 涓枃鏂囨。 |
+| [README_ZH.md](README_ZH.md) | 中文文档 |
 | [docs/USAGE.md](docs/USAGE.md) | Complete user guide |
-| [docs/USAGE_ZH.md](docs/USAGE_ZH.md) | 涓枃浣跨敤鏁欑▼ |
+| [docs/USAGE_ZH.md](docs/USAGE_ZH.md) | 中文使用教程 |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide (Docker, VPS, Windows, Linux) |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide |
 | [docs/API.md](docs/API.md) | API reference |
@@ -297,7 +297,7 @@ If you find this project helpful, feel free to reach out or support it:
         <em>Scan to add me as a friend</em>
       </td>
       <td align="center">
-        <strong>Support (WeChat/alipay Pay)</strong><br>
+        <strong>Support (WeChat Pay)</strong><br>
         <img src="docs/images/donate-qr.png" width="200" alt="Donation QR Code"><br>
         <em>Scan to support the project</em>
       </td>
