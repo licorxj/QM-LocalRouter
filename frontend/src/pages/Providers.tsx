@@ -140,6 +140,7 @@ const [deletingInvalidModels, setDeletingInvalidModels] = useState(false);
   const [selectedSyncIds, setSelectedSyncIds] = useState<Set<string>>(new Set());
   const [syncFetching, setSyncFetching] = useState(false);
   const [addSingleModelLoading, setAddSingleModelLoading] = useState<Map<string, boolean>>(new Map());
+  const [syncModelSearch, setSyncModelSearch] = useState('');
 
   const [iconSearchOpen, setIconSearchOpen] = useState(false);
   const [iconKeyword, setIconKeyword] = useState('');
@@ -1000,22 +1001,51 @@ const createModelMut = useMutation({
     </Dialog>
 
     {/* Sync Models Dialog */}
-    <Dialog open={syncDialogOpen} onOpenChange={v => { if (!v) { setSyncDialogOpen(false); setFetchedModels([]); setSelectedSyncIds(new Set()); } }}>
+    <Dialog open={syncDialogOpen} onOpenChange={v => { if (!v) { setSyncDialogOpen(false); setFetchedModels([]); setSelectedSyncIds(new Set()); setSyncModelSearch(''); } }}>
       <DialogContent className='max-w-[90vw] max-h-[85vh] flex flex-col'>
         <DialogHeader>
           <DialogTitle>{t('providers.syncModelsTitle') || '同步平台模型 - ' + selectedProvider?.name}</DialogTitle>
         </DialogHeader>
         <div className='flex-1 flex flex-col min-h-0'>
-          <div className='flex items-center justify-between mb-3 gap-2 flex-wrap'>
+          <div className='relative mb-3'>
+            <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
+            <Input value={syncModelSearch} onChange={e => setSyncModelSearch(e.target.value)} placeholder={t('common.search') + '...'} className='pl-8 h-9 text-sm' />
+          </div>
+          {(() => {
+            const filteredModels = fetchedModels.filter((m: any) =>
+              !syncModelSearch || m.model_id.toLowerCase().includes(syncModelSearch.toLowerCase()) ||
+              (m.display_name || '').toLowerCase().includes(syncModelSearch.toLowerCase()) ||
+              (m.model_type || '').toLowerCase().includes(syncModelSearch.toLowerCase())
+            );
+            const addableCount = filteredModels.filter((m: any) => !m.already_added).length;
+            const selectedInFilter = filteredModels.filter((m: any) => selectedSyncIds.has(m.model_id));
+            return (<>
+            <div className='flex items-center justify-between mb-3 gap-2 flex-wrap'>
             <div className='flex items-center gap-2'>
               <label className='flex items-center gap-1.5 text-sm cursor-pointer select-none'>
-                <input type='checkbox' checked={fetchedModels.length > 0 && selectedSyncIds.size === fetchedModels.filter((m: any) => !m.already_added).length} onChange={handleSyncSelectAll} className='w-4 h-4 rounded border-border accent-primary' />
+                <input type='checkbox' checked={filteredModels.length > 0 && selectedInFilter.length === addableCount && addableCount > 0}
+                  onChange={() => {
+                    const addable = filteredModels.filter((m: any) => !m.already_added);
+                    if (selectedInFilter.length === addable.length && addable.length > 0) {
+                      setSelectedSyncIds(new Set([...selectedSyncIds].filter(id => !addable.some((m: any) => m.model_id === id))));
+                    } else {
+                      setSelectedSyncIds(new Set([...selectedSyncIds, ...addable.map((m: any) => m.model_id)]));
+                    }
+                  }} className='w-4 h-4 rounded border-border accent-primary' />
                 {t('strategies.selectAll')}
               </label>
-              <Button variant='ghost' size='sm' onClick={handleSyncInvert}>{t('providers.invertSelection') || '反选'}</Button>
+              <Button variant='ghost' size='sm' onClick={() => {
+                const newSelected = new Set(selectedSyncIds);
+                for (const m of filteredModels) {
+                  if (m.already_added) continue;
+                  if (newSelected.has(m.model_id)) newSelected.delete(m.model_id);
+                  else newSelected.add(m.model_id);
+                }
+                setSelectedSyncIds(newSelected);
+              }}>{t('providers.invertSelection') || '反选'}</Button>
             </div>
             <div className='flex items-center gap-2'>
-              <span className='text-sm text-muted-foreground'>{t('providers.syncFetchedCount', { count: fetchedModels.length }) || '获取到 ' + fetchedModels.length + ' 个模型'}</span>
+              <span className='text-sm text-muted-foreground'>{t('providers.syncFetchedCount', { count: filteredModels.length }) || '获取到 ' + filteredModels.length + ' 个模型'}</span>
               {selectedSyncIds.size > 0 && <span className='text-sm text-primary'>{t('providers.selectedCount', { count: selectedSyncIds.size }) || '已选 ' + selectedSyncIds.size + ' 个'}</span>}
               <Button size='sm' disabled={selectedSyncIds.size === 0} onClick={handleBatchAddModels}>
                 <Plus className='w-3 h-3 mr-1' />{t('providers.batchAdd') || '批量添加'} ({selectedSyncIds.size})
@@ -1037,12 +1067,12 @@ const createModelMut = useMutation({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {fetchedModels.length === 0 ? (
+                {filteredModels.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className='text-center text-muted-foreground py-8'>{syncFetching ? <Loader2 className='w-4 h-4 animate-spin mx-auto' /> : t('common.noData')}</TableCell>
                   </TableRow>
                 ) : (
-                  fetchedModels.map((m: any) => {
+                  filteredModels.map((m: any) => {
                     const isSelected = selectedSyncIds.has(m.model_id);
                     const isAlreadyAdded = m.already_added;
                     return (
@@ -1080,6 +1110,8 @@ const createModelMut = useMutation({
               </TableBody>
             </Table>
           </div>
+          </>);
+          })()}
         </div>
       </DialogContent>
     </Dialog>
