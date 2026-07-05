@@ -4,7 +4,7 @@ import {
   getProviders, createProvider, updateProvider, deleteProvider,
   searchIcons, saveIcon, getHotProviders,
   getKeys, createKey, deleteKey, testKey, testAllKeys, deleteInvalidKeys,
-  getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testAllModels, deleteInvalidModels,
+  getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testAllModels, deleteInvalidModels, clearModels,
 } from '../services/api';
 import { useI18n } from '../i18n';
 import { toast } from '../stores/toast';
@@ -128,6 +128,7 @@ export default function Providers() {
   const [deletingInvalid, setDeletingInvalid] = useState(false);
 const [testingAllModels, setTestingAllModels] = useState(false);
 const [deletingInvalidModels, setDeletingInvalidModels] = useState(false);
+const [clearingModels, setClearingModels] = useState(false);
 
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<any>(null);
@@ -307,6 +308,22 @@ const [deletingInvalidModels, setDeletingInvalidModels] = useState(false);
     onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['models', selectedProvider?.id] });
       toast({ title: t('providers.modelInvalidDeleted') + ': ' + (res.data?.deleted ?? ''), variant: 'success' });
+    },
+    onError: () => {
+      toast({ title: t('providers.deleteFailed'), variant: 'destructive' });
+    },
+  });
+
+  const clearModelsMut = useMutation({
+    mutationFn: () => {
+      if (!selectedProvider) throw new Error('No provider selected');
+      return clearModels(selectedProvider.id);
+    },
+    onMutate: () => setClearingModels(true),
+    onSettled: () => setClearingModels(false),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['models', selectedProvider?.id] });
+      toast({ title: t('providers.modelsCleared') + ': ' + (res.data?.deleted ?? ''), variant: 'success' });
     },
     onError: () => {
       toast({ title: t('providers.deleteFailed'), variant: 'destructive' });
@@ -735,6 +752,7 @@ const createModelMut = useMutation({
                   </div>
                   <Button variant='outline' size='sm' onClick={() => testAllModelsMut.mutate()} disabled={testingAllModels}>{testingAllModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Zap className='w-3 h-3 mr-1' />}{t('providers.testAllModels')}</Button>
                   <Button variant='outline' size='sm' onClick={() => deleteInvalidModelsMut.mutate()} disabled={deletingInvalidModels}>{deletingInvalidModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash className='w-3 h-3 mr-1' />}{t('providers.deleteInvalidModels')}</Button>
+                  <Button variant='outline' size='sm' onClick={() => { if (window.confirm(t('providers.confirmClearModels'))) clearModelsMut.mutate(); }} disabled={clearingModels}>{clearingModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash2 className='w-3 h-3 mr-1' />}{t('providers.clearModels')}</Button>
                   <Button variant='outline' size='sm' onClick={async () => {
                   setSyncFetching(true);
                   try {

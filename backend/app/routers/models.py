@@ -593,3 +593,26 @@ async def delete_invalid_models(provider_id: int, db: AsyncSession = Depends(get
         await db.commit()
 
     return BatchDeleteResult(deleted=deleted_count)
+
+
+@router.delete("/providers/{provider_id}/models", response_model=BatchDeleteResult)
+async def clear_models(provider_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete all models for a provider."""
+    provider = await db.get(Provider, provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+
+    result = await db.execute(
+        select(Model).where(Model.provider_id == provider_id)
+    )
+    models = result.scalars().all()
+
+    deleted_count = 0
+    for m in models:
+        await db.delete(m)
+        deleted_count += 1
+
+    if deleted_count > 0:
+        await db.commit()
+
+    return BatchDeleteResult(deleted=deleted_count)

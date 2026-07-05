@@ -30,6 +30,7 @@ export const fetchModels = (providerId: number) => api.post('/api/models/fetch/'
 export const syncModels = (providerId: number) => api.post('/api/models/sync/' + providerId);
 export const testAllModels = (providerId: number) => api.post('/api/providers/' + providerId + '/models/test-all');
 export const deleteInvalidModels = (providerId: number) => api.delete('/api/providers/' + providerId + '/models/invalid');
+export const clearModels = (providerId: number) => api.delete('/api/providers/' + providerId + '/models');
 
 // Strategies
 export const getStrategies = () => api.get('/api/strategies');
