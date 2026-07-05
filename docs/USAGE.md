@@ -1,4 +1,4 @@
-﻿# LocalRouter - User Guide
+﻿﻿# LocalRouter - User Guide
 
 > **English** | [涓枃](USAGE_ZH.md)
 
