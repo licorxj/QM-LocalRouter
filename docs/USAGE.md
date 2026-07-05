@@ -1,6 +1,6 @@
-﻿﻿# LocalRouter - User Guide
+﻿# LocalRouter - User Guide
 
-> **English** | [涓枃](USAGE_ZH.md)
+> **English** | [中文](USAGE_ZH.md)
 
 ---
 

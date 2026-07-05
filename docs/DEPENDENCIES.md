@@ -1,4 +1,4 @@
-﻿﻿# LocalRouter - Dependencies
+﻿# LocalRouter - Dependencies
 
 ## System Requirements
 
@@ -86,20 +86,22 @@ Source: `frontend/package.json`
 
 ```
 LocalRouter
-鈹溾攢鈹€ Backend (Python 3.10+)
-鈹?  鈹溾攢鈹€ fastapi 鈹€鈹€鈹€ uvicorn 鈹€鈹€鈹€ httptools
-鈹?  鈹?  鈹斺攢鈹€ pydantic 鈹€鈹€鈹€ pydantic-settings 鈹€鈹€鈹€ python-dotenv
-鈹?  鈹溾攢鈹€ sqlalchemy[asyncio] 鈹€鈹€鈹€ aiosqlite
-鈹?  鈹溾攢鈹€ httpx 鈹€鈹€鈹€ HTTP forwarding
-鈹?  鈹斺攢鈹€ cryptography 鈹€鈹€鈹€ Fernet encryption
-鈹?鈹溾攢鈹€ Frontend (Node.js 18+)
-鈹?  鈹溾攢鈹€ react 鈹€鈹€鈹€ react-dom 鈹€鈹€鈹€ react-router-dom
-鈹?  鈹溾攢鈹€ @tanstack/react-query 鈹€鈹€鈹€ axios
-鈹?  鈹溾攢鈹€ zustand 鈹€鈹€鈹€ state management
-鈹?  鈹溾攢鈹€ shadcn/ui (Radix primitives + Tailwind)
-鈹?  鈹?  鈹斺攢鈹€ @radix-ui/* (dialog, select, switch, tabs, etc.)
-鈹?  鈹斺攢鈹€ vite 鈹€鈹€鈹€ typescript
-鈹?      鈹斺攢鈹€ tailwindcss 鈹€鈹€鈹€ postcss 鈹€鈹€鈹€ autoprefixer
-鈹?鈹斺攢鈹€ Database
-    鈹斺攢鈹€ SQLite (zero-config, file-based)
+├── Backend (Python 3.10+)
+│   ├── fastapi ─── uvicorn ─── httptools
+│   │   └── pydantic ─── pydantic-settings ─── python-dotenv
+│   ├── sqlalchemy[asyncio] ─── aiosqlite
+│   ├── httpx ─── HTTP forwarding
+│   └── cryptography ─── Fernet encryption
+│
+├── Frontend (Node.js 18+)
+│   ├── react ─── react-dom ─── react-router-dom
+│   ├── @tanstack/react-query ─── axios
+│   ├── zustand ─── state management
+│   ├── shadcn/ui (Radix primitives + Tailwind)
+│   │   └── @radix-ui/* (dialog, select, switch, tabs, etc.)
+│   └── vite ─── typescript
+│       └── tailwindcss ─── postcss ─── autoprefixer
+│
+└── Database
+    └── SQLite (zero-config, file-based)
 ```
