@@ -57,7 +57,7 @@ class Forwarder:
             raise ValueError(f"Unsupported protocol: {protocol}")
 
         timeout = strategy.timeout or 120
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.post(url, headers=headers, json=upstream_body)
             return resp
 
@@ -97,7 +97,7 @@ class Forwarder:
         timeout = strategy.timeout or 120
         completion_id = f"chatcmpl-{int(time.time()*1000)}"
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             async with client.stream("POST", url, headers=headers, json=upstream_body) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
@@ -250,7 +250,7 @@ class Forwarder:
         else:
             raise ValueError(f"Unsupported protocol for image generation: {protocol}")
 
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             resp = await client.post(url, headers=headers, json=upstream_body)
             return resp
 
@@ -275,7 +275,7 @@ class Forwarder:
             url = f"{base_url}/audio/speech"
             headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
             upstream_body = {**request_body, "model": model.model_id}
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
                 resp = await client.post(url, headers=headers, json=upstream_body)
                 content_type = resp.headers.get("content-type", "audio/mpeg")
                 return resp, content_type
@@ -285,7 +285,7 @@ class Forwarder:
             gemini_body = openai_tts_to_gemini({**request_body, "model": model.model_id})
             url = f"{base_url}/models/{model.model_id}:generateContent?key={real_key}"
             headers = {"Content-Type": "application/json"}
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
                 resp = await client.post(url, headers=headers, json=gemini_body)
                 if resp.status_code == 200:
                     audio_bytes = gemini_tts_response_to_openai_audio(resp.json())
@@ -342,7 +342,7 @@ class Forwarder:
             headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
             upstream_body = {**request_body, "model": model.model_id}
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=300, trust_env=False) as client:
             resp = await client.post(url, headers=headers, json=upstream_body)
             return resp
 
@@ -365,6 +365,6 @@ class Forwarder:
             url = f"{base_url}/videos/{task_id}"
             headers = {"Authorization": f"Bearer {real_key}"}
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             resp = await client.get(url, headers=headers)
             return resp
