@@ -32,6 +32,8 @@ async def _add_missing_columns():
         ("strategies", "key_switch_mode", "VARCHAR(20) DEFAULT 'none'"),
         ("strategies", "key_rpm_threshold", "INTEGER DEFAULT 0"),
         ("strategies", "key_count_threshold", "INTEGER DEFAULT 0"),
+        ("strategies", "rule_token_threshold", "INTEGER DEFAULT 0"),
+        ("strategies", "rule_token_period", "VARCHAR(20) DEFAULT 'per_day'"),
         ("request_logs", "prompt_tokens", "INTEGER DEFAULT 0"),
         ("request_logs", "completion_tokens", "INTEGER DEFAULT 0"),
         ("request_logs", "total_tokens", "INTEGER DEFAULT 0"),

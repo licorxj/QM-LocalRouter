@@ -45,6 +45,50 @@ class KeyUsageTracker:
 _key_tracker = KeyUsageTracker()
 
 
+class RuleTokenTracker:
+    """Track per-rule token usage for threshold-based switching with time windows."""
+
+    PERIOD_SECONDS = {
+        "per_minute": 60,
+        "per_5min": 300,
+        "per_day": 86400,
+        "per_month": 2592000,
+    }
+
+    def __init__(self):
+        # key: (strategy_id, rule_id), value: {"amount": int, "window_start": float}
+        self._usage: dict[tuple[int, int], dict] = {}
+
+    def _get_window(self, period: str) -> float:
+        return self.PERIOD_SECONDS.get(period, 86400)
+
+    def is_over_threshold(self, strategy_id: int, rule_id: int, threshold: int, period: str) -> bool:
+        if threshold <= 0:
+            return False
+        key = (strategy_id, rule_id)
+        entry = self._usage.get(key)
+        if not entry:
+            return False
+        window = self._get_window(period)
+        if time.time() - entry["window_start"] >= window:
+            return False  # Window expired
+        return entry["amount"] >= threshold
+
+    def record_usage(self, strategy_id: int, rule_id: int, tokens: int, period: str):
+        key = (strategy_id, rule_id)
+        entry = self._usage.get(key)
+        window = self._get_window(period)
+        now = time.time()
+        if not entry or (now - entry["window_start"]) >= window:
+            self._usage[key] = {"amount": tokens, "window_start": now}
+        else:
+            entry["amount"] += tokens
+
+
+# Global rule token tracker instance
+_rule_token_tracker = RuleTokenTracker()
+
+
 class Balancer:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -87,6 +131,16 @@ class Balancer:
 
         elif method == "priority":
             return rules[0]
+
+        elif method == "token_threshold":
+            threshold = strategy.rule_token_threshold
+            period = strategy.rule_token_period or "per_day"
+            eligible = [r for r in rules if not _rule_token_tracker.is_over_threshold(
+                strategy.id, r.id, threshold, period
+            )]
+            if not eligible:
+                eligible = rules  # All over threshold, fallback
+            return eligible[0]
 
         return rules[0]
 

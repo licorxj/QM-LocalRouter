@@ -41,11 +41,19 @@ export default function Strategies() {
     { value: 'random', label: t('strategies.optionRandom'), desc: t('strategies.optionDescRandom') },
     { value: 'failover', label: t('strategies.optionFailover'), desc: t('strategies.optionDescFailover') },
     { value: 'priority', label: t('strategies.optionPriority'), desc: t('strategies.optionDescHighest') },
+    { value: 'token_threshold', label: t('strategies.optionTokenThreshold'), desc: t('strategies.optionTokenThresholdDesc') },
+  ];
+
+  const tokenPeriodOptions = [
+    { value: 'per_minute', label: t('strategies.tokenPeriodMinute') },
+    { value: 'per_5min', label: t('strategies.tokenPeriod5Min') },
+    { value: 'per_day', label: t('strategies.tokenPeriodDay') },
+    { value: 'per_month', label: t('strategies.tokenPeriodMonth') },
   ];
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [form, setForm] = useState({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, is_active: true, timeout: 120, retry_count: 2, rules: [] as Rule[] });
+  const [form, setForm] = useState({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, rule_token_threshold: 0, rule_token_period: 'per_day', is_active: true, timeout: 120, retry_count: 2, rules: [] as Rule[] });
   const [newRule, setNewRule] = useState({ provider_id: 0, model_id: 0, priority: 0, weight: 1, is_active: true });
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResults, setTestResults] = useState<Record<number, any>>({});
@@ -138,14 +146,14 @@ export default function Strategies() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, is_active: true, timeout: 120, retry_count: 2, rules: [] });
+    setForm({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, rule_token_threshold: 0, rule_token_period: 'per_day', is_active: true, timeout: 120, retry_count: 2, rules: [] });
     setOpen(true);
   };
 
   const openEdit = (s: any) => {
     setEditing(s);
     setForm({
-      name: s.name, description: s.description || '', lb_strategy: s.lb_strategy, key_strategy: s.key_strategy || 'round_robin', key_switch_mode: s.key_switch_mode || 'none', key_rpm_threshold: s.key_rpm_threshold || 0, key_count_threshold: s.key_count_threshold || 0,
+      name: s.name, description: s.description || '', lb_strategy: s.lb_strategy, key_strategy: s.key_strategy || 'round_robin', key_switch_mode: s.key_switch_mode || 'none', key_rpm_threshold: s.key_rpm_threshold || 0, key_count_threshold: s.key_count_threshold || 0, rule_token_threshold: s.rule_token_threshold || 0, rule_token_period: s.rule_token_period || 'per_day',
       is_active: s.is_active, timeout: s.timeout, retry_count: s.retry_count,
       rules: (s.rules || []).map((r: any) => ({ provider_id: r.provider_id, model_id: r.model_id, model_name: r.model_name || '', priority: r.priority, weight: r.weight, is_active: r.is_active })),
     });
@@ -167,6 +175,7 @@ export default function Strategies() {
       name: form.name, description: form.description, lb_strategy: form.lb_strategy,
       key_strategy: form.key_strategy, key_switch_mode: form.key_switch_mode,
       key_rpm_threshold: form.key_rpm_threshold, key_count_threshold: form.key_count_threshold,
+      rule_token_threshold: form.rule_token_threshold, rule_token_period: form.rule_token_period,
       is_active: form.is_active, timeout: form.timeout, retry_count: form.retry_count,
       rules: form.rules,
     };
@@ -214,6 +223,11 @@ export default function Strategies() {
                   </div>
                   <div className='flex items-center gap-2'>
                     <Badge variant='outline'>{lbOptions.find(l => l.value === s.lb_strategy)?.label || s.lb_strategy}</Badge>
+                    {s.lb_strategy === 'token_threshold' && s.rule_token_threshold > 0 && (
+                      <Badge variant='outline' className='bg-green-500/10 text-green-400 border-green-500/20'>
+                        {t('strategies.tokenThreshold')}: {s.rule_token_threshold.toLocaleString()} / {tokenPeriodOptions.find(p => p.value === (s.rule_token_period || 'per_day'))?.label || s.rule_token_period}
+                      </Badge>
+                    )}
                     <Badge variant='outline' className='bg-blue-500/10 text-blue-400 border-blue-500/20'>Key: {keyStrategyOptions.find(k => k.value === (s.key_strategy || 'round_robin'))?.label || s.key_strategy}</Badge>
                     {s.key_switch_mode && s.key_switch_mode !== 'none' && (
                       <Badge variant='outline' className='bg-amber-500/10 text-amber-400 border-amber-500/20'>
@@ -291,6 +305,29 @@ export default function Strategies() {
                 <Input type='number' value={form.timeout} onChange={(e) => setForm({ ...form, timeout: Number(e.target.value) })} className='mt-1.5' />
               </div>
             </div>
+
+            {form.lb_strategy === 'token_threshold' && (
+              <div className='border rounded-lg p-4 bg-muted/30 space-y-3'>
+                <div>
+                  <Label className='text-sm font-semibold'>{t('strategies.tokenThreshold')}</Label>
+                  <p className='text-xs text-muted-foreground mb-2'>{t('strategies.tokenThresholdDesc')}</p>
+                </div>
+                <div className='grid grid-cols-2 gap-4'>
+                  <div>
+                    <Label>{t('strategies.tokenThreshold')}</Label>
+                    <Input type='number' min='1' value={form.rule_token_threshold || ''} onChange={(e) => setForm({ ...form, rule_token_threshold: Number(e.target.value) })} placeholder='100000' className='mt-1.5' />
+                    <p className='text-[10px] text-muted-foreground mt-1'>{t('strategies.tokenThresholdHint')}</p>
+                  </div>
+                  <div>
+                    <Label>{t('strategies.tokenPeriod')}</Label>
+                    <Select value={form.rule_token_period} onValueChange={(v) => setForm({ ...form, rule_token_period: v })}>
+                      <SelectTrigger className='mt-1.5'><SelectValue /></SelectTrigger>
+                      <SelectContent>{tokenPeriodOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className='grid grid-cols-2 gap-4'>
               <div>
@@ -457,7 +494,7 @@ export default function Strategies() {
               rules.push({ provider_id: m.provider_id, model_id: m.id, model_name: m.model_id, priority: idx, weight: 1, is_active: true });
               idx++;
             });
-            setForm({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, is_active: true, timeout: 120, retry_count: 2, rules });
+            setForm({ name: '', description: '', lb_strategy: 'round_robin', key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0, rule_token_threshold: 0, rule_token_period: 'per_day', is_active: true, timeout: 120, retry_count: 2, rules });
             setEditing(null);
             setByModelOpen(false);
             setOpen(true);

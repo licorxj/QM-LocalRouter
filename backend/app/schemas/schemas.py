@@ -190,11 +190,13 @@ class StrategyRuleOut(_Base):
 class StrategyCreate(_Base):
     name: str = Field(..., max_length=100)
     description: str = ""
-    lb_strategy: str = Field(default="round_robin", pattern=r"^(round_robin|weighted|random|failover|priority)$")
+    lb_strategy: str = Field(default="round_robin", pattern=r"^(round_robin|weighted|random|failover|priority|token_threshold)$")
     key_strategy: str = Field(default="round_robin", pattern=r"^(round_robin|random|failover)$")
     key_switch_mode: str = Field(default="none", pattern=r"^(none|rpm_threshold|count_threshold)$")
     key_rpm_threshold: int = 0
     key_count_threshold: int = 0
+    rule_token_threshold: int = 0
+    rule_token_period: str = "per_day"
     is_active: bool = True
     timeout: int = 120
     retry_count: int = 2
@@ -209,6 +211,8 @@ class StrategyUpdate(_Base):
     key_switch_mode: Optional[str] = None
     key_rpm_threshold: Optional[int] = None
     key_count_threshold: Optional[int] = None
+    rule_token_threshold: Optional[int] = None
+    rule_token_period: Optional[str] = None
     is_active: Optional[bool] = None
     timeout: Optional[int] = None
     retry_count: Optional[int] = None
@@ -224,6 +228,8 @@ class StrategyOut(_Base):
     key_switch_mode: str = "none"
     key_rpm_threshold: int = 0
     key_count_threshold: int = 0
+    rule_token_threshold: int = 0
+    rule_token_period: str = "per_day"
     is_active: bool
     timeout: int
     retry_count: int

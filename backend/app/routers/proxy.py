@@ -12,7 +12,7 @@ from app.models.strategy import Strategy, StrategyRule
 from app.models.provider import Provider
 from app.models.model import Model
 from app.models.api_key import ApiKey
-from app.services.balancer import Balancer
+from app.services.balancer import Balancer, _rule_token_tracker
 from app.services.forwarder import Forwarder
 from app.utils.protocol_adapter import (claude_response_to_openai, gemini_response_to_openai, openai_to_claude_response, openai_to_gemini_response, convert_openai_stream_to_claude_chunks, convert_openai_stream_to_gemini_chunks)
 from app.routers.settings import get_output_protocol
@@ -133,6 +133,10 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
                 request_body, 200, latency, True, None,
                 prompt_tokens=token_counter["prompt"], completion_tokens=token_counter["completion"], total_tokens=total,
             )
+            if strategy.lb_strategy == "token_threshold" and total > 0:
+                _rule_token_tracker.record_usage(
+                    strategy.id, rule.id, total, strategy.rule_token_period or "per_day"
+                )
             api_key.last_used_at = datetime.now(timezone.utc)
             await db.commit()
         except Exception as e:
@@ -185,6 +189,10 @@ async def _handle_non_stream(strategy, rule, provider, model, api_key, request_b
         request_body, 200, latency, False, None,
         prompt_tokens=prompt_tok, completion_tokens=completion_tok, total_tokens=total_tok,
     )
+    if strategy.lb_strategy == "token_threshold" and total_tok > 0:
+        _rule_token_tracker.record_usage(
+            strategy.id, rule.id, total_tok, strategy.rule_token_period or "per_day"
+        )
     return JSONResponse(content=data)
 
 

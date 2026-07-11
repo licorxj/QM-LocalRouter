@@ -432,6 +432,16 @@
     "deselectAll": "全不选",
     "selectPlatformFirst": "请先选择平台",
     "selectedModels": "已选模型",
-    "hintSelectModels": "从左侧选择模型"
+    "hintSelectModels": "从左侧选择模型",
+    "optionTokenThreshold": "Token 限额",
+    "optionTokenThresholdDesc": "达到 Token 阈值后切换到下一模型",
+    "tokenThreshold": "Token 阈值",
+    "tokenThresholdDesc": "模型在周期内消耗的 Token 数达到此值后自动切换",
+    "tokenPeriod": "统计周期",
+    "tokenPeriodMinute": "每分钟",
+    "tokenPeriod5Min": "每5分钟",
+    "tokenPeriodDay": "每天",
+    "tokenPeriodMonth": "每月",
+    "tokenThresholdHint": "当前周期内 Token 消耗达到此值时自动切换到下一个优先级的模型"
   }
 }

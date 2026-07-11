@@ -14,6 +14,8 @@ class Strategy(Base):
     key_switch_mode = Column(String(20), default="none")
     key_rpm_threshold = Column(Integer, default=0)
     key_count_threshold = Column(Integer, default=0)
+    rule_token_threshold = Column(Integer, default=0)
+    rule_token_period = Column(String(20), default="per_day")
     is_active = Column(Boolean, default=True)
     timeout = Column(Integer, default=120)
     retry_count = Column(Integer, default=2)

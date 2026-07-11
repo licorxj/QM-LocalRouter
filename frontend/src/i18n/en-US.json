@@ -334,7 +334,17 @@
     "deselectAll": "Deselect All",
     "selectPlatformFirst": "Select a provider first",
     "selectedModels": "Selected Models",
-    "hintSelectModels": "Select models from the left"
+    "hintSelectModels": "Select models from the left",
+    "optionTokenThreshold": "Token Limit",
+    "optionTokenThresholdDesc": "Switch when token usage reaches threshold",
+    "tokenThreshold": "Token Threshold",
+    "tokenThresholdDesc": "Auto-switch when token consumption reaches this value within the period",
+    "tokenPeriod": "Statistics Period",
+    "tokenPeriodMinute": "Per Minute",
+    "tokenPeriod5Min": "Per 5 Minutes",
+    "tokenPeriodDay": "Daily",
+    "tokenPeriodMonth": "Monthly",
+    "tokenThresholdHint": "Switch to next priority model when token usage reaches this value within the current period"
   },
   "logs": {
     "title": "Request Logs",
