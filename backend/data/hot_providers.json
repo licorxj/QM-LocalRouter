@@ -53,7 +53,7 @@
     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "description": "通义千问 Qwen 系列，阿里云大模型平台",
     "icon_keyword": "alibaba dashscope",
-    "homepage": "https://dashscope.aliyun.com"
+    "homepage": "https://www.aliyun.com/benefit/ai/aistar?clubBiz=subTask..12814001..10274.."
   },
   {
     "name": "腾讯云混元",
@@ -98,7 +98,7 @@
   {
     "name": "京东云言犀",
     "protocol": "openai",
-    "base_url": "https://aiapi.jd.com/v1",
+    "base_url": "https://modelservice.jdcloud.com/coding/openai/v1",
     "description": "言犀大模型，京东云平台",
     "icon_keyword": "jd cloud",
     "homepage": "https://www.jdcloud.com/cn/ai"
@@ -114,7 +114,7 @@
   {
     "name": "kieAI",
     "protocol": "openai",
-    "base_url": "https://api.kie.ai/codex/v1/responses",
+    "base_url": "https://api.kie.ai",
     "description": "全球顶尖多模态生成式模型汇聚,一站式解决图片/视频/音乐等多模态任务,价格折扣惊喜",
     "icon_keyword": "kieai",
     "homepage": "https://kie.ai?ref=1ef5b0d4df5fc43ae85034755f9bf754"
@@ -128,12 +128,12 @@
     "homepage": "https://stepfun.com"
   },
   {
-    "name": "零一万物 (Yi)",
+    "name": "DMXAPI",
     "protocol": "openai",
-    "base_url": "https://api.01.ai/v1",
-    "description": "Yi 系列模型，李开复创办",
+    "base_url": "https://www.dmxapi.cn/v1",
+    "description": "DMXAPI 是专为AI时代打造的人工智能大模型API聚合平台，致力于为AI开发程序员提供先进、便捷、高效的大模型接入服务。作为行业领先的API聚合解决方案，DMXAPI让开发者能够轻松驾驭全球顶尖的AI大模型资源。",
     "icon_keyword": "01ai yi",
-    "homepage": "https://01.ai"
+    "homepage": "https://www.dmxapi.cn/panel"
   },
   {
     "name": "SiliconFlow (硅基流动)",
@@ -146,7 +146,7 @@
   {
     "name": "商汤日日新",
     "protocol": "openai",
-    "base_url": "https://api.sensenova.cn/v1",
+    "base_url": "https://token.sensenova.cn/v1",
     "description": "日日新 SenseNova 大模型",
     "icon_keyword": "sensenova",
     "homepage": "https://sensenova.com.cn"
@@ -178,8 +178,8 @@
   {
     "name": "小米 MiMo",
     "protocol": "openai",
-    "base_url": "https://platform.xiaomimimo.com/v1",
-    "description": "小米 MiMo 万亿参数 Agent 大模型，1M 上下文",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "description": "邀请码HKEQ8J,输入得10元.小米 MiMo 万亿参数 Agent 大模型,性价比很高，1M 上下文.",
     "icon_keyword": "xiaomi mimo",
     "homepage": "https://account.xiaomi.com/fe/service/login/password?_group=DEFAULT&sid=api-platform&qs=%253Fcallback%253Dhttps%25253A%25252F%25252Fplatform.xiaomimimo.com%25252Fsts%25253Fsign%25253DM7gfywevl3CG5YTTcZDifhK6IK8%2525253D%252526followup%25253Dhttps%2525253A%2525252F%2525252Fplatform.xiaomimimo.com%2525252Fconsole%2525252Fbalance%2526sid%253Dapi-platform%2526_group%253DDEFAULT&callback=https%3A%2F%2Fplatform.xiaomimimo.com%2Fsts%3Fsign%3DM7gfywevl3CG5YTTcZDifhK6IK8%253D%26followup%3Dhttps%253A%252F%252Fplatform.xiaomimimo.com%252Fconsole%252Fbalance&_sign=iV9Q5kxBqXGdbkb6kmapXvJrkZM%3D&serviceParam=%7B%22checkSafePhone%22%3Afalse%2C%22checkSafeAddress%22%3Afalse%2C%22lsrp_score%22%3A0.0%7D&showActiveX=false&theme=&needTheme=false&bizDeviceType=&_locale=zh_CN"
   },
@@ -346,7 +346,7 @@
   {
     "name": "Cloudflare Workers AI",
     "protocol": "openai",
-    "base_url": "https://api.cloudflare.com/client/v4",
+    "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
     "description": "边缘 AI 推理，全球节点部署",
     "icon_keyword": "cloudflare",
     "homepage": "https://www.cloudflare.com/products/workers-ai"
@@ -426,7 +426,7 @@
   {
     "name": "Cloudflare AI Gateway",
     "protocol": "openai",
-    "base_url": "https://gateway.ai.cloudflare.com/v1",
+    "base_url": "https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}/openai",
     "description": "AI 请求网关，缓存和限流功能",
     "icon_keyword": "cloudflare gateway",
     "homepage": "https://developers.cloudflare.com/ai-gateway"
@@ -458,7 +458,7 @@
   {
     "name": "360 智脑",
     "protocol": "openai",
-    "base_url": "https://api.360.cn/v1",
+    "base_url": "https://api.zhineng.360.cn/v1",
     "description": "360 智脑大模型",
     "icon_keyword": "360 ai",
     "homepage": "https://www.360.cn"
