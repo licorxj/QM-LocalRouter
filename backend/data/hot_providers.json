@@ -3,7 +3,7 @@
     "name": "OpenAI",
     "protocol": "openai",
     "base_url": "https://api.openai.com/v1",
-    "description": "GPT-4o / GPT-4 / o1 / o3 系列模型",
+    "description": "openaiGPT系列模型",
     "icon_keyword": "openai",
     "homepage": "https://openai.com"
   },
@@ -11,7 +11,7 @@
     "name": "Anthropic",
     "protocol": "claude",
     "base_url": "https://api.anthropic.com/v1",
-    "description": "Claude Opus 4 / Claude 4 / Claude 3.5 系列模型",
+    "description": "Claude系列模型",
     "icon_keyword": "claude anthropic",
     "homepage": "https://anthropic.com"
   },
@@ -19,7 +19,7 @@
     "name": "Google Gemini",
     "protocol": "gemini",
     "base_url": "https://generativelanguage.googleapis.com/v1beta",
-    "description": "Gemini 2.5 Pro / Gemini 2.0 Flash 系列",
+    "description": "googel家Gemini系列",
     "icon_keyword": "google gemini",
     "homepage": "https://gemini.google.com"
   },
@@ -27,7 +27,7 @@
     "name": "DeepSeek",
     "protocol": "openai",
     "base_url": "https://api.deepseek.com/v1",
-    "description": "DeepSeek V3 / R1 系列，国产高性价比",
+    "description": "DeepSeek国产高性价比",
     "icon_keyword": "deepseek",
     "homepage": "https://deepseek.com"
   },
@@ -46,6 +46,14 @@
     "description": "邀请码HKEQ8J,输入得10元.小米 MiMo 万亿参数 Agent 大模型,性价比很高，1M 上下文.",
     "icon_keyword": "xiaomi mimo",
     "homepage": "https://platform.xiaomimimo.com?ref=HKEQ8J"
+  },
+  {
+    "name": "QMtokenhub",
+    "protocol": "openai",
+    "base_url": "http://tokenhub.licorxj.online/v1",
+    "description": "晴沐智坊上线的api整合平台,以收集高性价比羊毛为使命,支持多种模型,有免费额度,",
+    "icon_keyword": "晴沐智坊",
+    "homepage": "http://tokenhub.licorxj.online"
   },
   {
     "name": "Moonshot (Kimi)",
@@ -72,12 +80,12 @@
     "homepage": "https://cloud.siliconflow.cn/i/L5HvpICN"
   },
   {
-    "name": "阿里百炼 (DashScope)",
+    "name": "cavotiAI (国际模型)",
     "protocol": "openai",
-    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "description": "通义千问 Qwen 系列，阿里云大模型平台",
+    "base_url": "https://cavoti.com/v1",
+    "description": "前沿模型聚合路由平台，价格便宜，注册送一亿token",
     "icon_keyword": "alibaba dashscope",
-    "homepage": "https://www.aliyun.com/benefit/ai/aistar?clubBiz=subTask..12814001..10274.."
+    "homepage": "https://cavoti.com/register?aff=4VLMN2NN445Y"
   },
   {
     "name": "腾讯云混元",
