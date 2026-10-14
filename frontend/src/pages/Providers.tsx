@@ -572,20 +572,29 @@ const createModelMut = useMutation({
   const [cliPlatform, setCliPlatform] = useState('');
   const [cliBrowserBusy, setCliBrowserBusy] = useState(false);
   const [cliBrowserCode, setCliBrowserCode] = useState('');
+  const [cliBrowserUrl, setCliBrowserUrl] = useState('');
   const cliBrowserTimer = useRef<any>(null);
 
   async function startCliBrowser() {
     if (!cliPlatform) return;
     setCliBrowserBusy(true);
     setCliBrowserCode('');
+    setCliBrowserUrl('');
     try {
       const res = await cliBrowserStart({ platform: cliPlatform, provider_id: 0,
-                                           client_id: cliPaste.client_id, client_secret: cliPaste.client_secret });
+                                           client_id: cliPaste.client_id, client_secret: cliPaste.client_secret,
+                                           region: cliPaste.region });
       const openUrl = res.data.verification_uri || res.data.authorize_url;
-      if (openUrl) window.open(openUrl, '_blank');
+      if (openUrl) {
+        setCliBrowserUrl(openUrl);
+        const win = window.open(openUrl, '_blank');
+        if (!win) toast({ title: t('providers.cliOpenLoginPageHint'), variant: 'default' });
+      }
       if ((res.data.flow || '').includes('device')) setCliBrowserCode(res.data.user_code || '');
       const sessionId = res.data.session_id;
-      const isPollingFlow = ['cli-aws-device'].includes(res.data.flow || '');
+      // WorkBuddy 与官方插件一致：页面不回跳本地，靠轮询换取令牌（上游 1s 间隔）
+      const isPollingFlow = ['cli-aws-device', 'cli-workbuddy'].includes(res.data.flow || '');
+      const pollInterval = res.data.flow === 'cli-workbuddy' ? 1500 : 2000;
       const startedAt = Date.now();
       const poll = async () => {
         try {
@@ -601,10 +610,11 @@ const createModelMut = useMutation({
           if (st.data.status === 'failed') { setCliBrowserBusy(false); toast({ title: t('providers.oauthFailed'), description: st.data.error, variant: 'destructive' }); return; }
           if (st.data.status === 'expired' || Date.now() - startedAt > 300000) { setCliBrowserBusy(false); toast({ title: t('providers.oauthTimeout'), variant: 'destructive' }); return; }
           if (st.data.user_code) setCliBrowserCode(st.data.user_code);
-          cliBrowserTimer.current = setTimeout(poll, isPollingFlow ? 2000 : 3000);
+          if (st.data.authorize_url && !cliBrowserUrl) setCliBrowserUrl(st.data.authorize_url);
+          cliBrowserTimer.current = setTimeout(poll, isPollingFlow ? pollInterval : 3000);
         } catch { setCliBrowserBusy(false); }
       };
-      if (isPollingFlow) cliBrowserTimer.current = setTimeout(poll, 2000);
+      if (isPollingFlow) cliBrowserTimer.current = setTimeout(poll, pollInterval);
       else { setCliBrowserBusy(false); }
     } catch (e: any) {
       setCliBrowserBusy(false);
@@ -612,7 +622,8 @@ const createModelMut = useMutation({
     }
   }
 
-  const cliBrowserSupported = ['cline', 'amazon-q', 'antigravity'].includes(cliPlatform);
+  const isWorkbuddyPlatform = cliPlatform === 'workbuddy' || cliPlatform === 'workbuddy-intl';
+  const cliBrowserSupported = ['cline', 'amazon-q', 'antigravity', 'workbuddy', 'workbuddy-intl'].includes(cliPlatform);
 
   // --- Local CLI credential import ---
   const [cliDialogOpen, setCliDialogOpen] = useState(false);
@@ -620,11 +631,11 @@ const createModelMut = useMutation({
   const [cliDetecting, setCliDetecting] = useState(false);
   const [cliCandidates, setCliCandidates] = useState<any[]>([]);
   const [cliImporting, setCliImporting] = useState(false);
-  const [cliPaste, setCliPaste] = useState({ token: '', code: '', refresh_token: '', client_id: '', client_secret: '', region: '' });
+  const [cliPaste, setCliPaste] = useState({ token: '', code: '', refresh_token: '', client_id: '', client_secret: '', region: '', server_url: '' });
 
   async function openCliImport() {
     setCliDialogOpen(true);
-    setCliCandidates([]); setCliBrowserBusy(false); setCliBrowserCode(''); setCliPaste({ token: '', code: '', refresh_token: '', client_id: '', client_secret: '', region: '' });
+    setCliCandidates([]); setCliBrowserBusy(false); setCliBrowserCode(''); setCliPaste({ token: '', code: '', refresh_token: '', client_id: '', client_secret: '', region: '', server_url: '' });
     try {
       const res = await getCliPlatforms();
       const list = res.data || [];
@@ -1137,8 +1148,21 @@ const createModelMut = useMutation({
             <div className='rounded-lg border border-dashed p-3 text-center space-y-2'>
               <Button onClick={startCliBrowser} disabled={cliBrowserBusy} className='gap-2'>
                 {cliBrowserBusy ? <Loader2 className='w-4 h-4 animate-spin' /> : <Globe className='w-4 h-4' />}
-                {cliBrowserBusy ? t('providers.oauthWaiting') : t('providers.cliBrowserBtn')}
+                {cliBrowserBusy
+                  ? (isWorkbuddyPlatform ? t('providers.cliWorkbuddyWaiting') : t('providers.oauthWaiting'))
+                  : (isWorkbuddyPlatform ? t('providers.cliWorkbuddyLoginBtn') : t('providers.cliBrowserBtn'))}
               </Button>
+              {isWorkbuddyPlatform && cliBrowserBusy && (
+                <div className='text-xs text-muted-foreground space-y-1'>
+                  <p>{isWorkbuddyPlatform && cliPlatform === 'workbuddy-intl' ? 'workbuddy.ai' : 'workbuddy.cn'}</p>
+                  {cliBrowserUrl && (
+                    <a href={cliBrowserUrl} target='_blank' rel='noreferrer'
+                       className='text-cyan-600 hover:underline inline-flex items-center gap-1'>
+                      <Globe className='h-3 w-3' />{t('providers.cliOpenLoginPageBtn')}
+                    </a>
+                  )}
+                </div>
+              )}
               {cliBrowserBusy && cliBrowserCode && (
                 <div className='text-xs text-muted-foreground flex items-center justify-center gap-1.5 flex-wrap'>
                   {t('providers.oauthDeviceCode')}
@@ -1189,7 +1213,13 @@ const createModelMut = useMutation({
                            placeholder={t('providers.cliCodePaste')} className='font-mono text-xs' />
                   )}
                   {cliPlatform === 'opencode' && (
-                    <p className='text-xs text-emerald-500'>{t('providers.cliOpencodeNote')}</p>
+                    <>
+                      <p className='text-xs text-muted-foreground'>{t('providers.cliOpencodeNote')}</p>
+                      <Input value={cliPaste.server_url} onChange={e => setCliPaste(f => ({ ...f, server_url: e.target.value }))}
+                             placeholder='http://127.0.0.1:4096' className='font-mono text-xs' />
+                      <Input type='password' value={cliPaste.token} onChange={e => setCliPaste(f => ({ ...f, token: e.target.value }))}
+                             placeholder={t('providers.cliOpencodePassword')} className='font-mono text-xs' />
+                    </>
                   )}
                   {(cliPlatform === 'trae' || cliPlatform === 'amazon-q') && (
                     <Input value={cliPaste.token} onChange={e => setCliPaste(f => ({ ...f, token: e.target.value }))}

@@ -32,6 +32,12 @@ export default function SettingsPage() {
     getLanIp().then(r => setLanIp(r.data.ip)).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    // Surface update availability on load (the backend already implements the
+    // git fetch/compare/update logic via /api/settings/repository).
+    getRepositoryStatus().then(r => setRepositoryStatus(r.data)).catch(() => {});
+  }, []);
+
   const toggleTheme = () => {
     const next = !dark;
     setDark(next);
@@ -57,7 +63,27 @@ export default function SettingsPage() {
     try {
       const response = await updateRepository();
       setRepositoryStatus(response.data);
-      toast({ title: response.data.updated ? t("settings.updateComplete") : t("settings.upToDate"), variant: "success" });
+      if (response.data.restarting) {
+        toast({ title: t("settings.updateRestarting"), variant: "success" });
+        // The server restarts itself to load the new Python code; wait for it
+        // to come back, then reload so the browser picks up the fresh build.
+        let waited = 0;
+        const poll = async () => {
+          try {
+            const hr = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
+            if (hr.ok) {
+              toast({ title: t("settings.updateRestarted"), variant: "success" });
+              setTimeout(() => window.location.reload(), 600);
+              return;
+            }
+          } catch { /* not back yet */ }
+          waited += 1;
+          if (waited < 30) setTimeout(poll, 1000);
+        };
+        setTimeout(poll, 2500);
+      } else {
+        toast({ title: response.data.updated ? t("settings.updateComplete") : t("settings.upToDate"), variant: "success" });
+      }
     } catch (error: any) {
       toast({ title: t("settings.updateFailed"), description: error.response?.data?.detail, variant: "destructive" });
     } finally {
@@ -164,6 +190,31 @@ export default function SettingsPage() {
   const formatDate = (iso: string) => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
 
   const proxyUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:12002/v1` : "http://127.0.0.1:12002/v1";
+  const betaUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:12002/v1beta` : "http://127.0.0.1:12002/v1beta";
+
+  // 客户端格式 → 请求端点。格式由端点决定，后端自动转换；与上游同格式时直通。
+  const ENDPOINT_CARDS = [
+    {
+      id: "openai", label: "OpenAI", method: "POST", path: "/v1/chat/completions",
+      desc: t("settings.epOpenaiDesc"),
+      curl: `curl ${proxyUrl}/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"your-strategy","messages":[{"role":"user","content":"Hello"}]}'`,
+    },
+    {
+      id: "responses", label: "Responses", method: "POST", path: "/v1/responses",
+      desc: t("settings.epResponsesDesc"),
+      curl: `curl ${proxyUrl}/responses \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"your-strategy","input":"Hello","stream":true}'`,
+    },
+    {
+      id: "claude", label: "Claude", method: "POST", path: "/v1/messages",
+      desc: t("settings.epClaudeDesc"),
+      curl: `curl ${proxyUrl}/messages \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"your-strategy","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`,
+    },
+    {
+      id: "gemini", label: "Gemini", method: "POST", path: "/v1beta/models/{model}:generateContent",
+      desc: t("settings.epGeminiDesc"),
+      curl: `curl "${betaUrl}/models/your-strategy:generateContent" \\\n  -H "Content-Type: application/json" \\\n  -d '{"contents":[{"role":"user","parts":[{"text":"Hello"}]}]}'`,
+    },
+  ];
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -290,36 +341,34 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Output Protocol */}
+      {/* Client-format endpoints */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><Globe className="h-4 w-4 text-purple-400" /><CardTitle className="text-base">{t("settings.outputProtocol")}</CardTitle></div>
+          <div className="flex items-center gap-2"><Globe className="h-4 w-4 text-purple-400" /><CardTitle className="text-base">{t("settings.clientEndpoints")}</CardTitle></div>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label className="text-sm font-medium">{t("settings.responseFormat")}</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">{t("settings.responseFormatDesc")}</p>
-            </div>
-            <div className="flex gap-2">
-              {["openai", "claude", "gemini"].map((p) => (
-                <Button key={p} variant={appSettings.output_protocol === p ? "default" : "outline"} size="sm" className={appSettings.output_protocol === p ? "bg-cyan-600 hover:bg-cyan-700" : ""} onClick={() => { setAppSettings({ ...appSettings, output_protocol: p }); }}>
-                  {p === "openai" ? "OpenAI" : p === "claude" ? "Claude" : "Gemini"}
-                </Button>
-              ))}
-            </div>
+          <p className="text-xs text-muted-foreground">{t("settings.clientEndpointsDesc")}</p>
+          <div className="mt-3 space-y-2">
+            {ENDPOINT_CARDS.map((ep) => {
+              const active = appSettings.output_protocol === ep.id;
+              return (
+                <div key={ep.id} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant={active ? "default" : "secondary"} className={active ? "bg-cyan-600 hover:bg-cyan-700" : ""}>{ep.label}</Badge>
+                      <code className="text-xs font-mono text-muted-foreground">{ep.method} {ep.path}</code>
+                    </div>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyCode(ep.curl)} title={t("settings.copyCurl")}>
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">{ep.desc}</p>
+                  <pre className="text-[11px] leading-relaxed bg-muted p-2.5 rounded-md font-mono overflow-x-auto text-foreground mt-2">{ep.curl}</pre>
+                </div>
+              );
+            })}
           </div>
-          <p className="text-xs text-muted-foreground mt-3">
-            {appSettings.output_protocol === "openai" && t("settings.openaiFormatDesc")}
-            {appSettings.output_protocol === "claude" && t("settings.claudeFormatDesc")}
-            {appSettings.output_protocol === "gemini" && t("settings.geminiFormatDesc")}
-          </p>
-          <div className="flex justify-end mt-4">
-            <Button size="sm" onClick={() => saveSettingsMut.mutate()} disabled={saveSettingsMut.isPending}>
-              {saveSettingsMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <ShieldCheck className="h-3.5 w-3.5 mr-1" />}
-              {t("common.save")}
-            </Button>
-          </div>
+          <p className="text-xs text-muted-foreground mt-3">{t("settings.clientEndpointsHint")}</p>
         </CardContent>
       </Card>
 

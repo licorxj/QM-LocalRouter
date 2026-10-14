@@ -1,14 +1,19 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
 import os
+import sys
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    # PyInstaller one-file build: BASE_DIR/backend lives inside the read-only
+    # bundle, so keep user data (sqlite db, backups, icons) next to the exe.
+    BASE_DIR = Path(sys.executable).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 class Settings(BaseSettings):
     APP_NAME: str = "LLM API Router"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "2.0.1"
     HOST: str = "127.0.0.1"
     BACKEND_PORT: int = 12002
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DATA_DIR / 'app.db'}"

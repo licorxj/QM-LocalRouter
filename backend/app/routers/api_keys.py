@@ -204,6 +204,46 @@ async def _test_single_key(key: ApiKey, provider: Provider, db: AsyncSession) ->
     alias = key.alias or ""
 
     try:
+        if str(provider.auth_type or "") == "opencode" or key.oauth_profile == "opencode":
+            # OpenCode：本地服务端健康检查 /global/health（而非 OpenAI /models）
+            from app.services import opencode as opencode_svc
+            client = opencode_svc.OpenCodeClient(provider.base_url or opencode_svc.DEFAULT_BASE_URL, real_key)
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                healthy = await client.health()
+                msg = "Key is valid" if healthy else "OpenCode 服务未就绪"
+            except Exception as e:
+                healthy = False
+                msg = str(e)[:200]
+            if healthy:
+                key.status = "active"
+                key.last_error = None
+            else:
+                key.status = "inactive"
+                key.last_error = msg
+            await db.commit()
+            return {"key_id": key_id, "alias": alias, "success": healthy, "message": msg, "latency_ms": elapsed}
+
+        if str(provider.auth_type or "") == "cline" or key.oauth_profile == "cline":
+            # Cline：拉取模型目录（GET /models）作为可达性健康检查
+            from app.services import cline as cline_svc
+            client = cline_svc.ClineClient(provider.base_url or cline_svc.CLINE_API_BASE, real_key)
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                ok = await client.health()
+                msg = "Key is valid" if ok else "Cline 上游不可达"
+            except Exception as e:
+                ok = False
+                msg = str(e)[:200]
+            if ok:
+                key.status = "active"
+                key.last_error = None
+            else:
+                key.status = "inactive"
+                key.last_error = msg
+            await db.commit()
+            return {"key_id": key_id, "alias": alias, "success": ok, "message": msg, "latency_ms": elapsed}
+
         if provider.protocol == "openai":
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(
@@ -288,74 +328,7 @@ async def test_key(key_id: int, db: AsyncSession = Depends(get_db)):
     real_key = decrypt_value(key.key_value)
     start = time.monotonic()
 
-    try:
-        if provider.protocol == "openai":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{provider.base_url.rstrip('/')}/models",
-                    headers={"Authorization": f"Bearer {real_key}"},
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    key.status = "active"
-                    key.last_error = None
-                    await db.commit()
-                    return ApiKeyTestResult(success=True, message="Key is valid", latency_ms=elapsed)
-                else:
-                    msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                    key.status = "inactive"
-                    key.last_error = msg
-                    await db.commit()
-                    return ApiKeyTestResult(success=False, message=msg, latency_ms=elapsed)
-
-        elif provider.protocol == "claude":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{provider.base_url.rstrip('/')}/messages",
-                    headers={
-                        "x-api-key": real_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={"model": "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    key.status = "active"
-                    key.last_error = None
-                    await db.commit()
-                    return ApiKeyTestResult(success=True, message="Key is valid", latency_ms=elapsed)
-                else:
-                    msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                    key.status = "inactive"
-                    key.last_error = msg
-                    await db.commit()
-                    return ApiKeyTestResult(success=False, message=msg, latency_ms=elapsed)
-
-        elif provider.protocol == "gemini":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{provider.base_url.rstrip('/')}/models?key={real_key}",
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    key.status = "active"
-                    key.last_error = None
-                    await db.commit()
-                    return ApiKeyTestResult(success=True, message="Key is valid", latency_ms=elapsed)
-                else:
-                    msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                    key.status = "inactive"
-                    key.last_error = msg
-                    await db.commit()
-                    return ApiKeyTestResult(success=False, message=msg, latency_ms=elapsed)
-
-        else:
-            return ApiKeyTestResult(success=False, message="Test not supported for custom protocol")
-
-    except Exception as e:
-        elapsed = int((time.monotonic() - start) * 1000)
-        key.status = "inactive"
-        key.last_error = str(e)[:500]
-        await db.commit()
-        return ApiKeyTestResult(success=False, message=str(e)[:200], latency_ms=elapsed)
+    # 与批量测试共用同一实现（含 opencode 本地服务端分支）
+    result = await _test_single_key(key, provider, db)
+    return ApiKeyTestResult(success=result["success"], message=result["message"],
+                            latency_ms=result.get("latency_ms"))
