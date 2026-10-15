@@ -59,8 +59,10 @@ backend/data/online_providers.json
 version.json
 
 # === Local build / scratch artifacts ===
-release/
 .omo/
+release/*.exe
+release/build/
+release/dist/
 
 # === Generated / Scratch files ===
 *_gen.py

@@ -13,7 +13,7 @@ DATA_DIR.mkdir(exist_ok=True)
 
 class Settings(BaseSettings):
     APP_NAME: str = "LLM API Router"
-    APP_VERSION: str = "2.0.2"
+    APP_VERSION: str = "2.0.3"
     HOST: str = "127.0.0.1"
     BACKEND_PORT: int = 12002
     DATABASE_URL: str = f"sqlite+aiosqlite:///{DATA_DIR / 'app.db'}"
