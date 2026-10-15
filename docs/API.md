@@ -24,6 +24,21 @@ the upstream protocol are identical the request is forwarded untouched
 Every endpoint uses the same routing (`model` = strategy name), load
 balancing, key rotation, logging and token accounting.
 
+### Model names: strategy or direct
+
+`model` accepts either form:
+
+| Form | Example | Behaviour |
+|------|---------|-----------|
+| Strategy name | `my-strategy` | Strategy routing: rules, LB method, retries and the strategy's **key policy** |
+| `platform_id/model_id` | `33/opencode/ling-3.1-flash-free` | Direct call: skips the strategy, uses that platform's own **multi-key policy** |
+| `platform_name/model_id` | `DeepSeek/deepseek-v4-flash` | Same as above (platform names containing `/` must use the id form) |
+
+`model_id` may itself contain `/` (only the first `/` separates the platform
+part). Strategy names are resolved first, so existing clients are unaffected.
+In the platform page the copy button next to a model id copies the ready-to-use
+`platform_id/model_id` string.
+
 ### Chat Completions
 
     POST /v1/chat/completions
@@ -169,6 +184,11 @@ Returns all active strategy names.
 |--------|----------|-------------|
 | GET | /api/settings | Get settings |
 | PUT | /api/settings | Update settings |
+
+Provider records now carry the direct-mode key policy
+(`key_strategy`, `key_switch_mode`, `key_rpm_threshold`,
+`key_count_threshold`), settable via `PUT /api/providers/{id}` or the
+"多key调用策略" button on the platform page.
 
 Output Protocol: openai, responses, claude, gemini (legacy global override —
 the per-endpoint format above takes precedence for /v1/responses, /v1/messages

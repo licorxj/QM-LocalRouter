@@ -416,6 +416,31 @@ The **Settings** page (gear icon in sidebar) provides:
 - Displays the proxy address to configure in your client
 - Shows a curl example for quick testing
 
+### Request Endpoints
+
+One gateway, four client formats. The response format is decided by the endpoint
+you call — the backend converts automatically, and same-format requests are
+forwarded untouched (no extra latency):
+
+| Endpoint | Client format |
+|----------|---------------|
+| `POST /v1/chat/completions` | OpenAI Chat Completions |
+| `POST /v1/responses` | OpenAI Responses API (Codex / Cline) |
+| `POST /v1/messages` | Anthropic Messages API (Claude SDK base_url = `/v1`) |
+| `POST /v1beta/models/{model}:generateContent` | Gemini GenerateContent (Gemini SDK base_url = `/v1beta`) |
+
+The `model` field accepts a **strategy name** or a **direct** `platform_id/model_id`
+form (e.g. `33/opencode/ling-3.1-flash-free`). The copy button next to a model id
+in the platform page copies the ready-to-use `platform_id/model_id` string.
+
+### Multi-key policy per platform
+
+On the platform page, the **多key调用策略** button next to the API Keys table opens
+the key rotation rules for that platform (key selection + switch trigger +
+thresholds, the same options as the strategy editor). They apply when you call a
+model directly via `platform_id/model_id`; strategy routing keeps using the
+strategy's own key policy.
+
 ### Output Protocol
 | Mode | Description |
 |------|-------------|

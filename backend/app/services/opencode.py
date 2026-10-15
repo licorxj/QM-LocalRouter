@@ -25,6 +25,14 @@ OpenCode 不是标准 OpenAI 端点，而是自带一个本地 HTTP 服务端（
 OpenCode 执行内置工具期间不会吐任何文本增量，且会发出**中间态 finish:"stop"**。
 若此刻就收流，最终答案会被丢弃。必须用 activeToolCallIds 跟踪工具的 pending/running，
 工具活动期间即使空闲也不断流，且忽略工具在飞时的中间 stop。
+
+=== 上游失败时的重试事件（否则错误被吞成空回复）===
+上游报错（如 "Upstream request failed: Model is unavailable."）时，opencode 并**不立刻**
+发 message.updated.error，而是先发 `session.status{type:"retry", attempt, message}` 并自行
+重试（默认 4 次，退避 5s/10s/20s/40s）。整个重试期间没有任何 delta，也没有 error 事件：
+只按 message.updated.error 判定的话，会被 45s 空闲超时切断并返回 200 + content=null，
+真实错误彻底丢失。处理办法：① 记录 retry 的 message 并 touch()（重试期间算活动，不按空闲断流）；
+② 因超时收流时把记录的 message 作为 error 返回，由上层转成 502。
 """
 import asyncio
 import base64
@@ -426,11 +434,20 @@ class OpenCodeClient:
         active_tools: set[str] = set()
         part_types: dict[str, str] = {}
         # 用可变容器承载标量状态，避免 nonlocal 的闭包陷阱
-        state = {"got_delta": False, "last": time.monotonic()}
+        state = {"got_delta": False, "last": time.monotonic(),
+                 "retry_error": None, "retry_attempts": 0}
 
         def touch():
             """标记一次“有进展”，用于空闲计时重置。"""
             state["last"] = time.monotonic()
+
+        def result_with_error(flag: str):
+            """因超时收流时，若期间上游在重试报错，把真实错误带出去，别静默返回空内容。"""
+            out = {"content": content, "reasoning": reasoning, flag: True}
+            if state["retry_error"]:
+                out["error"] = {"name": "UpstreamRetryExhausted",
+                                "data": {"message": state["retry_error"]}}
+            return out
 
         ready = asyncio.Event()
 
@@ -466,6 +483,21 @@ class OpenCodeClient:
             async for ev in self._subscribe(ready):
                 etype, props = ev["type"], ev["properties"]
                 if props.get("sessionID") != session_id:
+                    continue
+                if etype == "session.status":
+                    # 上游失败时 opencode 自己会重试（默认 4 次），期间既无 delta 也无
+                    # message.updated.error，只发 status.type=="retry"。必须：
+                    # ① 记下报错，供超时收流时透出真实原因；
+                    # ② 视作活动，否则会被空闲超时误判为「模型没输出」而返回空内容。
+                    status = props.get("status") or {}
+                    if isinstance(status, dict) and status.get("type") == "retry":
+                        state["retry_error"] = status.get("message") or state["retry_error"]
+                        try:
+                            state["retry_attempts"] = max(state["retry_attempts"],
+                                                          int(status.get("attempt") or 0))
+                        except (TypeError, ValueError):
+                            pass
+                        touch()
                     continue
                 if etype == "message.part.updated":
                     part = props.get("part") or {}
@@ -531,7 +563,7 @@ class OpenCodeClient:
                 raise OpenCodeError(504, "OpenCode 响应超时", "timeout")
             if not state["got_delta"] and elapsed >= min(_FIRST_DELTA_TIMEOUT, timeout):
                 task.cancel()
-                return {"content": content, "reasoning": reasoning, "no_data": True}
+                return result_with_error("no_data")
             idle_for = time.monotonic() - state["last"]
             if idle_for >= min(_IDLE_TIMEOUT, timeout):
                 # 工具还在执行就继续等，否则会截断依赖工具执行的回答
@@ -539,7 +571,7 @@ class OpenCodeClient:
                     await asyncio.sleep(0.5)
                     continue
                 task.cancel()
-                return {"content": content, "reasoning": reasoning, "idle_timeout": True}
+                return result_with_error("idle_timeout")
             try:
                 return await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
             except asyncio.TimeoutError:

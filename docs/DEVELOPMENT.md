@@ -328,6 +328,18 @@ The format is chosen per endpoint (`out_format` in `proxy.py`); the global
 `output_protocol` setting only remains as a legacy override for
 `/v1/chat/completions`.
 
+### Direct model names (`platform_id/model_id`)
+`proxy._resolve_direct_model` splits on the **first** `/` (model ids may contain
+`/`), resolves the platform by numeric id or by unique name, then the model by
+`model_id` or `display_name`. `_dispatch_by_model` resolves strategy names first
+and only falls back to direct mode, so existing clients are unaffected;
+`_forward_direct` builds a pseudo strategy whose `key_*` fields come from the
+new provider columns (`key_strategy`, `key_switch_mode`, `key_rpm_threshold`,
+`key_count_threshold`, added in `database._add_missing_columns`), so
+`Balancer.select_key` applies the platform multi-key policy — strategy routing
+keeps using the strategy's own policy. Auth (401/403) and 429 failures mark the
+key like `_try_forward` does.
+
 ### Passthrough (same format)
 `Forwarder._passthrough_plan` forwards the request byte-for-byte when the client
 format equals the upstream protocol (`custom` counts as OpenAI): same URL
@@ -338,6 +350,18 @@ upstream auth. `_handle_non_stream` / `_handle_stream` detect the same condition
 via `_raw_body` + `_client_format` and return the upstream body/frames verbatim,
 extracting tokens from `usage`, `message_start`/`message_delta` or
 `usageMetadata` for logging.
+
+### OpenCode upstream retry events
+When the OpenCode upstream fails (e.g. `Upstream request failed: Model is
+unavailable.`), `opencode serve` does **not** emit `message.updated.error`
+immediately: it first sends `session.status{type:"retry", attempt, message}` and
+retries on its own (4 attempts, 5s/10s/20s/40s backoff). No text delta arrives
+during that window, so a collector that only checks `message.updated.error` is cut
+off by the 45s idle timeout and returns HTTP 200 with `content: null`, losing the
+real error. `OpenCodeClient._collect` therefore records the retry message and
+treats it as activity; a collect that ends on idle/first-delta timeout returns the
+recorded message as an error, which the caller turns into HTTP 502. The full list
+of SSE pitfalls is documented at the top of `services/opencode.py`.
 
 ---
 

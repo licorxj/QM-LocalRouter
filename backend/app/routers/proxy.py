@@ -351,6 +351,111 @@ async def _handle_non_stream(strategy, rule, provider, model, api_key, request_b
     return JSONResponse(content=data)
 
 
+async def _resolve_direct_model(model_name: str, db: AsyncSession):
+    """Resolve a "provider_id/model_id" (or "provider_name/model_id") direct call.
+
+    Returns (provider, model) or None when the name is not in direct form or
+    nothing matches. Strategy names always win: this is only tried after the
+    strategy lookup fails.
+    """
+    pid, sep, model_id = (model_name or "").partition("/")
+    if not sep or not model_id:
+        return None
+
+    provider = None
+    if pid.isdigit():
+        provider = await db.get(Provider, int(pid))
+    if provider is None:
+        result = await db.execute(select(Provider).where(Provider.name == pid))
+        provider = result.scalar_one_or_none()
+    if not provider or not provider.is_active:
+        return None
+
+    result = await db.execute(
+        select(Model).where(Model.provider_id == provider.id, Model.model_id == model_id, Model.is_active == True)
+    )
+    model_obj = result.scalar_one_or_none()
+    if not model_obj:
+        result = await db.execute(
+            select(Model).where(Model.provider_id == provider.id, Model.display_name == model_id, Model.is_active == True)
+        )
+        model_obj = result.scalar_one_or_none()
+    if not model_obj:
+        return None
+    return provider, model_obj
+
+
+def _direct_pseudo_strategy(provider: Provider, model_obj: Model) -> Strategy:
+    """Pseudo strategy for direct calls: key rotation follows the platform's
+    own multi-key policy (Strategy settings stay authoritative for strategy
+    routing)."""
+    return Strategy(
+        id=0, name=f"__direct__{provider.name}__{model_obj.model_id}",
+        lb_strategy="round_robin", is_active=True,
+        timeout=120, retry_count=0,
+        key_strategy=getattr(provider, "key_strategy", None) or "round_robin",
+        key_switch_mode=getattr(provider, "key_switch_mode", None) or "none",
+        key_rpm_threshold=getattr(provider, "key_rpm_threshold", 0) or 0,
+        key_count_threshold=getattr(provider, "key_count_threshold", 0) or 0,
+    )
+
+
+async def _mark_direct_key_error(api_key: ApiKey, status_code: int, db: AsyncSession):
+    """Mirror _try_forward's key bookkeeping for direct calls."""
+    if status_code == 429:
+        api_key.status = "rate_limited"
+        api_key.last_error = "Rate limited"
+        await db.commit()
+    elif status_code in (401, 403):
+        api_key.status = "inactive"
+        api_key.last_error = f"Auth error: {status_code}"
+        await db.commit()
+
+
+async def _forward_direct(provider: Provider, model_obj: Model, db: AsyncSession,
+                          body: dict, is_stream: bool, out_format: str):
+    """Forward a direct (provider/model) call, using the platform key policy."""
+    balancer = Balancer(db)
+    pseudo_strategy = _direct_pseudo_strategy(provider, model_obj)
+    api_key = await balancer.select_key(provider.id, pseudo_strategy)
+    if not api_key:
+        raise HTTPException(503, detail=f"No active API key for provider {provider.name}")
+
+    pseudo_rule = StrategyRule(
+        id=0, strategy_id=0, provider_id=provider.id,
+        model_id=model_obj.id, priority=1, weight=1, is_active=True,
+    )
+    pseudo_strategy.rules = [pseudo_rule]
+
+    forwarder = Forwarder(db)
+    if is_stream:
+        return await _handle_stream(pseudo_strategy, pseudo_rule, provider, model_obj,
+                                    api_key, body, forwarder, db, out_format)
+    resp = await _handle_non_stream(pseudo_strategy, pseudo_rule, provider, model_obj,
+                                    api_key, body, forwarder, db, out_format)
+    if getattr(resp, "status_code", 200) >= 400:
+        await _mark_direct_key_error(api_key, resp.status_code, db)
+    return resp
+
+
+async def _dispatch_by_model(model_name: str, db: AsyncSession, body: dict,
+                             is_stream: bool, out_format: str):
+    """Strategy routing first; fall back to 'provider_id/model_id' direct mode."""
+    try:
+        strategy = await _resolve(model_name, db)
+    except HTTPException:
+        direct = await _resolve_direct_model(model_name, db)
+        if direct:
+            return await _forward_direct(direct[0], direct[1], db, body, is_stream, out_format)
+        if "/" in (model_name or ""):
+            raise HTTPException(
+                404,
+                detail=f"Direct model '{model_name}' not found: check the provider id/name and the model id",
+            )
+        raise
+    return await _try_forward(strategy, db, body, is_stream, out_format)
+
+
 async def _chat_completions_impl(request: Request, db: AsyncSession, out_format="openai", body_override: dict | None = None):
     body = body_override if body_override is not None else await request.json()
     model_name = body.get("model", "")
@@ -375,36 +480,10 @@ async def _chat_completions_impl(request: Request, db: AsyncSession, out_format=
             model_obj = result2.scalar_one_or_none()
         if not model_obj or not model_obj.is_active:
             raise HTTPException(404, detail=f"Model '{model_name}' not found or inactive for provider {provider.name}")
+        return await _forward_direct(provider, model_obj, db, body, is_stream, out_format)
 
-        # Select an API key
-        key_result = await db.execute(
-            select(ApiKey).where(ApiKey.provider_id == int(direct_provider_id), ApiKey.status == "active")
-        )
-        api_key = key_result.scalars().first()
-        if not api_key:
-            raise HTTPException(503, detail=f"No active API key for provider {provider.name}")
-
-        # Create pseudo-strategy and rule for forwarding
-        pseudo_strategy = Strategy(
-            id=0, name=f"__direct__{provider.name}__{model_name}",
-            lb_strategy="round_robin", is_active=True,
-            timeout=120, retry_count=0,
-        )
-        pseudo_rule = StrategyRule(
-            id=0, strategy_id=0, provider_id=provider.id,
-            model_id=model_obj.id, priority=1, weight=1, is_active=True,
-        )
-        pseudo_strategy.rules = [pseudo_rule]
-
-        forwarder = Forwarder(db)
-        if is_stream:
-            return await _handle_stream(pseudo_strategy, pseudo_rule, provider, model_obj, api_key, body, forwarder, db, out_format)
-        else:
-            return await _handle_non_stream(pseudo_strategy, pseudo_rule, provider, model_obj, api_key, body, forwarder, db, out_format)
-
-    # Normal strategy mode
-    strategy = await _resolve(model_name, db)
-    return await _try_forward(strategy, db, body, is_stream, out_format)
+    # Strategy routing first, then "provider_id/model_id" direct mode
+    return await _dispatch_by_model(model_name, db, body, is_stream, out_format)
 
 
 @router.post("/v1/chat/completions")
@@ -425,6 +504,19 @@ async def completions(request: Request, db: AsyncSession = Depends(get_db)):
     }
     strategy = await _resolve(model_name, db)
     return await _try_forward(strategy, db, chat_body, body.get("stream", False))
+
+
+async def _completions_impl(body: dict, db: AsyncSession, is_stream: bool, out_format: str = "openai"):
+    """Legacy /v1/completions: same routing as chat completions."""
+    prompt = body.get("prompt", "")
+    model_name = body.get("model", "")
+    chat_body = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": body.get("max_tokens", 1024),
+        "stream": is_stream,
+    }
+    return await _dispatch_by_model(model_name, db, chat_body, is_stream, out_format)
 
 
 # ============================================================

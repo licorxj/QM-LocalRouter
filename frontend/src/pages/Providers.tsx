@@ -125,6 +125,8 @@ export default function Providers() {
 
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyForm, setKeyForm] = useState({ key_value: '', alias: '', weight: 1 });
+  const [keyPolicyOpen, setKeyPolicyOpen] = useState(false);
+  const [keyPolicyForm, setKeyPolicyForm] = useState({ key_strategy: 'round_robin', key_switch_mode: 'none', key_rpm_threshold: 0, key_count_threshold: 0 });
   const [testingKeyId, setTestingKeyId] = useState<number | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [deletingInvalid, setDeletingInvalid] = useState(false);
@@ -217,6 +219,38 @@ const [clearingModels, setClearingModels] = useState(false);
       setConfirmDeleteId(null);
     },
     onError: () => toast({ title: t('providers.deleteFailed'), variant: 'destructive' }),
+  });
+
+  const keyPolicyOptions = [
+    { value: 'round_robin', label: t('strategies.optionRoundRobin'), desc: t('strategies.optionDescOrder') },
+    { value: 'random', label: t('strategies.optionRandom'), desc: t('strategies.optionDescRandom') },
+    { value: 'failover', label: t('strategies.optionFailover'), desc: t('strategies.optionDescFailover') },
+  ];
+  const keySwitchOptions = [
+    { value: 'none', label: t('strategies.optionNoSwitch'), desc: t('strategies.optionNoSwitchDesc') },
+    { value: 'rpm_threshold', label: t('strategies.optionRPM'), desc: t('strategies.optionRPMDesc') },
+    { value: 'count_threshold', label: t('strategies.optionCount'), desc: t('strategies.optionCountDesc') },
+  ];
+
+  const openKeyPolicy = () => {
+    if (!selectedProvider) return;
+    setKeyPolicyForm({
+      key_strategy: selectedProvider.key_strategy || 'round_robin',
+      key_switch_mode: selectedProvider.key_switch_mode || 'none',
+      key_rpm_threshold: selectedProvider.key_rpm_threshold || 0,
+      key_count_threshold: selectedProvider.key_count_threshold || 0,
+    });
+    setKeyPolicyOpen(true);
+  };
+
+  const saveKeyPolicyMut = useMutation({
+    mutationFn: () => updateProvider(selectedProvider.id, { ...keyPolicyForm }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['providers'] });
+      toast({ title: t('providers.keyPolicySaved'), variant: 'success' });
+      setKeyPolicyOpen(false);
+    },
+    onError: () => toast({ title: t('providers.keyPolicySaveFailed'), variant: 'destructive' }),
   });
 
   const createKeyMut = useMutation({
@@ -946,8 +980,19 @@ const createModelMut = useMutation({
 
               <Separator className='my-3' />
               <div className='flex items-center justify-between mb-2 bg-muted/50 rounded-lg px-3 py-2'>
-                <h4 className='font-medium flex items-center gap-2'><KeyRound className='w-4 h-4' />{t('providers.apiKeys')}</h4>
+                <h4 className='font-medium flex items-center gap-2'>
+                  <KeyRound className='w-4 h-4' />{t('providers.apiKeys')}
+                  <Badge variant='outline' className='ml-1 cursor-pointer bg-blue-500/10 text-blue-400 border-blue-500/20' onClick={openKeyPolicy} title={t('providers.keyPolicy')}>
+                    Key: {keyPolicyOptions.find(o => o.value === (selectedProvider.key_strategy || 'round_robin'))?.label || selectedProvider.key_strategy}
+                    {selectedProvider.key_switch_mode && selectedProvider.key_switch_mode !== 'none' && (
+                      <span className='ml-1 text-amber-400'>
+                        {selectedProvider.key_switch_mode === 'rpm_threshold' ? ' · RPM>' + (selectedProvider.key_rpm_threshold || 0) : ' · ' + (selectedProvider.key_count_threshold || 0) + t('strategies.countUnit')}
+                      </span>
+                    )}
+                  </Badge>
+                </h4>
                 <div className='flex gap-1'>
+                  <Button variant='outline' size='sm' onClick={openKeyPolicy}><Layers className='w-3 h-3 mr-1' />{t('providers.keyPolicy')}</Button>
                   <Button variant='outline' size='sm' onClick={() => testAllMut.mutate()} disabled={testingAll}>{testingAll ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Zap className='w-3 h-3 mr-1' />}{t('providers.testAll')}</Button>
                   <Button variant='outline' size='sm' onClick={() => deleteInvalidMut.mutate()} disabled={deletingInvalid}>{deletingInvalid ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash className='w-3 h-3 mr-1' />}{t('providers.deleteInvalid')}</Button>
                   <Button size='sm' onClick={openCreateKey}><Plus className='w-3 h-3 mr-1' />{t('providers.addKey')}</Button>
@@ -1034,7 +1079,7 @@ const createModelMut = useMutation({
                       <TableCell className='font-mono text-xs'>
                         <span className='flex items-center gap-1'>
                           {m.model_id}
-                          <Button variant='ghost' size='sm' className='h-5 w-5 p-0 opacity-50 hover:opacity-100' onClick={() => { navigator.clipboard.writeText(m.model_id); toast({ title: t('common.copied'), variant: 'success' as any }); }}>
+                          <Button variant='ghost' size='sm' className='h-5 w-5 p-0 opacity-50 hover:opacity-100' title={t('providers.copyModelDirectName')} onClick={() => { const directName = `${selectedProvider.id}/${m.model_id}`; navigator.clipboard.writeText(directName); toast({ title: t('common.copied') + ': ' + directName, variant: 'success' as any }); }}>
                             <Copy className='h-3 w-3' />
                           </Button>
                         </span>
@@ -1301,6 +1346,55 @@ const createModelMut = useMutation({
               {t('providers.saveBtn')}{keyLines.length > 1 ? ' (' + keyLines.length + ')' : ''}
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Multi-key policy Dialog */}
+    <Dialog open={keyPolicyOpen} onOpenChange={setKeyPolicyOpen}>
+      <DialogContent className='max-w-md'>
+        <DialogHeader><DialogTitle>{t('providers.keyPolicyTitle')}</DialogTitle></DialogHeader>
+        <p className='text-xs text-muted-foreground'>{t('providers.keyPolicyDesc')}</p>
+        <div className='space-y-4'>
+          <div className='grid grid-cols-2 gap-4'>
+            <div>
+              <Label>{t('strategies.keySelection')}</Label>
+              <Select value={keyPolicyForm.key_strategy} onValueChange={(v) => setKeyPolicyForm(f => ({ ...f, key_strategy: v }))}>
+                <SelectTrigger className='mt-1.5'><SelectValue /></SelectTrigger>
+                <SelectContent>{keyPolicyOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label} - {o.desc}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>{t('strategies.keySwitch')}</Label>
+              <p className='text-[10px] text-muted-foreground mt-0.5 mb-1'>{t('strategies.keySwitchDesc')}</p>
+              <Select value={keyPolicyForm.key_switch_mode} onValueChange={(v) => setKeyPolicyForm(f => ({ ...f, key_switch_mode: v, key_rpm_threshold: 0, key_count_threshold: 0 }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{keySwitchOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label} - {o.desc}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          {keyPolicyForm.key_switch_mode === 'rpm_threshold' && (
+            <div>
+              <Label>{t('strategies.rpmValue')}</Label>
+              <Input type='number' min='1' value={keyPolicyForm.key_rpm_threshold || ''} onChange={(e) => setKeyPolicyForm(f => ({ ...f, key_rpm_threshold: Number(e.target.value) }))} placeholder='60' className='mt-1.5' />
+              <p className='text-[10px] text-muted-foreground mt-1'>{t('strategies.rpmHint')}</p>
+            </div>
+          )}
+          {keyPolicyForm.key_switch_mode === 'count_threshold' && (
+            <div>
+              <Label>{t('strategies.countValue')}</Label>
+              <Input type='number' min='1' value={keyPolicyForm.key_count_threshold || ''} onChange={(e) => setKeyPolicyForm(f => ({ ...f, key_count_threshold: Number(e.target.value) }))} placeholder='1000' className='mt-1.5' />
+              <p className='text-[10px] text-muted-foreground mt-1'>{t('strategies.countHint')}</p>
+            </div>
+          )}
+          <p className='text-xs text-muted-foreground border-t pt-3'>{t('providers.keyPolicyScopeHint')}</p>
+        </div>
+        <DialogFooter>
+          <Button variant='outline' onClick={() => setKeyPolicyOpen(false)}>{t('providers.cancel')}</Button>
+          <Button onClick={() => saveKeyPolicyMut.mutate()} disabled={saveKeyPolicyMut.isPending}>
+            {saveKeyPolicyMut.isPending ? <Loader2 className='w-4 h-4 animate-spin mr-1' /> : null}
+            {t('providers.saveBtn')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

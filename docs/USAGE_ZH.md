@@ -415,6 +415,27 @@ curl http://localhost:12002/v1/responses \
 - 显示需要配置到客户端的代理地址
 - 提供 curl 测试示例
 
+### 请求端点
+
+一个网关，四种客户端格式。响应格式由请求端点决定，后端自动转换；同格式请求直接透传，不增加额外延迟：
+
+| 端点 | 客户端格式 |
+|------|------------|
+| `POST /v1/chat/completions` | OpenAI Chat Completions |
+| `POST /v1/responses` | OpenAI Responses API（Codex / Cline） |
+| `POST /v1/messages` | Anthropic Messages API（Claude SDK，base_url 指向 `/v1`） |
+| `POST /v1beta/models/{model}:generateContent` | Gemini GenerateContent（Gemini SDK，base_url 指向 `/v1beta`） |
+
+`model` 字段支持**策略名**或**直连**形式 `平台id/模型id`（例如
+`33/opencode/ling-3.1-flash-free`）。平台管理页模型 ID 旁的复制按钮可直接复制
+`平台id/模型id` 字符串。
+
+### 平台多 Key 策略
+
+平台管理页 API Keys 右上角的「**多key调用策略**」按钮，可设置该平台多个 Key 的
+选择与轮换方式（Key 选择、切换触发、阈值，选项与路由策略编辑器一致）。该设置仅在
+通过 `平台id/模型id` 直连调用时生效；走路由策略链路时以策略的 Key 策略设置为准。
+
 ### 输出协议
 | 模式 | 说明 |
 |------|------|
