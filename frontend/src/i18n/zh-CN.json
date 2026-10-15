@@ -12,7 +12,8 @@
     "startService": "启动后端服务",
     "startServiceDesc": "后端服务未运行，请在终端执行以下命令启动：",
     "startServiceHint": "启动后页面将自动检测服务状态。",
-    "endpoints": "端点和鉴权设置"
+    "endpoints": "端点和鉴权设置",
+    "forwarding": "路由转发设置"
   },
   "settings": {
     "appearance": "外观设置",

@@ -12,7 +12,8 @@
     "startService": "Start Backend Service",
     "startServiceDesc": "The backend service is not running. Please execute the following command in a terminal:",
     "startServiceHint": "The page will automatically detect the service status after startup.",
-    "endpoints": "Endpoints & Auth"
+    "endpoints": "Endpoints & Auth",
+    "forwarding": "Routing & Forwarding"
   },
   "settings": {
     "appearance": "Appearance",
