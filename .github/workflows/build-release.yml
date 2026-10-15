@@ -85,7 +85,10 @@ jobs:
           chmod +x "$STAGE/apirouter"
           cp "release/run.sh" "$STAGE/run.sh"
           chmod +x "$STAGE/run.sh"
-          [ -d frontend/dist ] && cp -r frontend/dist "$STAGE/frontend/dist"
+          if [ -d frontend/dist ]; then
+            mkdir -p "$STAGE/frontend"
+            cp -r frontend/dist "$STAGE/frontend/dist"
+          fi
           [ -f .env.example ] && cp .env.example "$STAGE/.env.example"
           ( cd "$STAGE" && zip -r "../$ASSET.zip" . )
         shell: bash
