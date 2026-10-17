@@ -107,9 +107,34 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath "$asset.zip" -Force
         shell: pwsh
 
-      - name: Upload release asset
+      # The three platform jobs run in parallel, so they must NOT create/publish
+      # the Release themselves: whichever finishes first would publish an
+      # immutable Release and the others would fail to upload their assets.
+      # Each job only uploads its zip as a workflow artifact; the single
+      # `release` job below creates the Release once with all assets attached.
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+
+      - name: Create release and attach every asset
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}.zip
+          files: packages/*/*.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

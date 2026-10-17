@@ -50,15 +50,13 @@ async def _add_missing_columns():
         ("providers", "key_switch_mode", "VARCHAR(20) DEFAULT 'none'"),
         ("providers", "key_rpm_threshold", "INTEGER DEFAULT 0"),
         ("providers", "key_count_threshold", "INTEGER DEFAULT 0"),
-        ("providers", "key_strategy", "VARCHAR(20) DEFAULT 'round_robin'"),
-        ("providers", "key_switch_mode", "VARCHAR(20) DEFAULT 'none'"),
-        ("providers", "key_rpm_threshold", "INTEGER DEFAULT 0"),
-        ("providers", "key_count_threshold", "INTEGER DEFAULT 0"),
         ("api_keys", "oauth_profile", "VARCHAR(50) DEFAULT ''"),
         ("api_keys", "oauth_refresh", "TEXT DEFAULT ''"),
         ("api_keys", "oauth_expires_at", "INTEGER DEFAULT 0"),
-        ("api_keys", "status_until", "INTEGER DEFAULT 0"),
         ("api_keys", "fail_count", "INTEGER DEFAULT 0"),
+        ("api_keys", "last_failure_kind", "VARCHAR(20) DEFAULT ''"),
+        ("api_keys", "cooldown_until", "INTEGER DEFAULT 0"),
+        ("api_keys", "last_check_at", "DATETIME"),
     ]
     async with engine.begin() as conn:
         for table, col, col_def in columns_to_add:

@@ -6,8 +6,16 @@ from app.models.api_key import ApiKey
 from app.models.provider import Provider
 from app.schemas.schemas import ApiKeyCreate, ApiKeyUpdate, ApiKeyOut, ApiKeyTestResult, ApiKeyBatchCreate, ApiKeyBatchCreateResult, BatchTestResult, BatchDeleteResult
 from app.utils.crypto import encrypt_value, decrypt_value, mask_key
+from app.utils.key_health import (
+    KIND_NETWORK,
+    classify_exception,
+    classify_status_code,
+    record_key_failure,
+    record_key_success,
+)
 import httpx
 import time
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api", tags=["api-keys"])
 
@@ -35,6 +43,9 @@ def _key_to_out(key: ApiKey) -> dict:
         oauth_expires_at=key.oauth_expires_at or 0,
         last_used_at=key.last_used_at,
         last_error=key.last_error or "",
+        fail_count=key.fail_count or 0,
+        last_failure_kind=key.last_failure_kind or "",
+        cooldown_until=key.cooldown_until or 0,
         created_at=key.created_at,
     ).model_dump()
 
@@ -131,6 +142,12 @@ async def update_key(key_id: int, data: ApiKeyUpdate, db: AsyncSession = Depends
         raise HTTPException(404, "API Key not found")
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(key, k, v)
+    # 手动启用/复位时一并清掉失败计数与冷却
+    if data.status and data.status in ("active", "untested"):
+        key.fail_count = 0
+        key.cooldown_until = 0
+        key.last_failure_kind = ""
+        key.last_error = None
     await db.commit()
     await db.refresh(key)
     return _key_to_out(key)
@@ -196,60 +213,67 @@ async def test_all_keys(provider_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
-async def _probe_key(key: ApiKey, provider: Provider) -> dict:
-    """探测单个 key 是否可用（不写库）。
+async def _test_single_key(key: ApiKey, provider: Provider, db: AsyncSession) -> dict:
+    """Test a single key and update its status.
 
-    返回 {success, message, latency_ms, kind}；kind 由 key_health 归类，
-    调用方据此决定状态——**连不通 / 限流 / 上游 5xx 一律不停用 key**。
+    失败按类型记账（见 app.utils.key_health）：网络不可达 / 上游 5xx 只写
+    last_error，**不会**把 key 标成无效；只有 401/403 连续多次才禁用。
     """
-    from app.utils.key_health import classify_exception, classify_status_code
-
     real_key = decrypt_value(key.key_value)
     start = time.monotonic()
+    key_id = key.id
+    alias = key.alias or ""
 
-    def _done(ok: bool, msg: str, kind: str) -> dict:
-        if not ok and kind not in ("auth", "rate_limit"):
-            msg = f"{msg}（非凭证问题，未停用该 key）"
-        return {
-            "success": ok,
-            "message": msg[:200],
-            "latency_ms": int((time.monotonic() - start) * 1000),
-            "kind": kind,
-        }
-
-    # --- 特殊 auth_type：本地 CLI 服务端健康检查（opencode / cline）---
-    if str(provider.auth_type or "") == "opencode" or key.oauth_profile == "opencode":
-        from app.services import opencode as opencode_svc
-        client = opencode_svc.OpenCodeClient(
-            provider.base_url or opencode_svc.DEFAULT_BASE_URL, real_key
-        )
-        try:
-            healthy = await client.health()
-            return _done(healthy, "Key is valid" if healthy else "OpenCode 服务未就绪",
-                         "ok" if healthy else "unreachable")
-        except Exception as e:
-            return _done(False, str(e), classify_exception(e))
-
-    if str(provider.auth_type or "") == "cline" or key.oauth_profile == "cline":
-        from app.services import cline as cline_svc
-        client = cline_svc.ClineClient(
-            provider.base_url or cline_svc.CLINE_API_BASE, real_key
-        )
-        try:
-            ok = await client.health()
-            return _done(ok, "Key is valid" if ok else "Cline 上游不可达",
-                         "ok" if ok else "unreachable")
-        except Exception as e:
-            return _done(False, str(e), classify_exception(e))
-
-    # --- 常规协议探测 ---
     try:
+        if str(provider.auth_type or "") == "opencode" or key.oauth_profile == "opencode":
+            # OpenCode：本地服务端健康检查 /global/health（而非 OpenAI /models）
+            from app.services import opencode as opencode_svc
+            client = opencode_svc.OpenCodeClient(provider.base_url or opencode_svc.DEFAULT_BASE_URL, real_key)
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                healthy = await client.health()
+                msg = "Key is valid" if healthy else "OpenCode 服务未就绪"
+            except Exception as e:
+                healthy = False
+                msg = str(e)[:200]
+            if healthy:
+                await record_key_success(key, db)
+            else:
+                # 服务未就绪属于本地服务/网络问题，不算 key 失效
+                await record_key_failure(key, db, KIND_NETWORK, msg)
+            return {"key_id": key_id, "alias": alias, "success": healthy, "message": msg, "latency_ms": elapsed}
+
+        if str(provider.auth_type or "") == "cline" or key.oauth_profile == "cline":
+            # Cline：拉取模型目录（GET /models）作为可达性健康检查
+            from app.services import cline as cline_svc
+            client = cline_svc.ClineClient(provider.base_url or cline_svc.CLINE_API_BASE, real_key)
+            elapsed = int((time.monotonic() - start) * 1000)
+            try:
+                ok = await client.health()
+                msg = "Key is valid" if ok else "Cline 上游不可达"
+            except Exception as e:
+                ok = False
+                msg = str(e)[:200]
+            if ok:
+                await record_key_success(key, db)
+            else:
+                await record_key_failure(key, db, KIND_NETWORK, msg)
+            return {"key_id": key_id, "alias": alias, "success": ok, "message": msg, "latency_ms": elapsed}
+
         if provider.protocol == "openai":
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(
                     f"{provider.base_url.rstrip('/')}/models",
                     headers={"Authorization": f"Bearer {real_key}"},
                 )
+                elapsed = int((time.monotonic() - start) * 1000)
+                if resp.status_code == 200:
+                    await record_key_success(key, db)
+                    return {"key_id": key_id, "alias": alias, "success": True, "message": "Key is valid", "latency_ms": elapsed}
+                msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                await record_key_failure(key, db, classify_status_code(resp.status_code), msg, resp.status_code)
+                return {"key_id": key_id, "alias": alias, "success": False, "message": msg, "latency_ms": elapsed}
+
         elif provider.protocol == "claude":
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
@@ -261,41 +285,62 @@ async def _probe_key(key: ApiKey, provider: Provider) -> dict:
                     },
                     json={"model": "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
                 )
+                elapsed = int((time.monotonic() - start) * 1000)
+                if resp.status_code == 200:
+                    await record_key_success(key, db)
+                    return {"key_id": key_id, "alias": alias, "success": True, "message": "Key is valid", "latency_ms": elapsed}
+                msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                await record_key_failure(key, db, classify_status_code(resp.status_code), msg, resp.status_code)
+                return {"key_id": key_id, "alias": alias, "success": False, "message": msg, "latency_ms": elapsed}
+
         elif provider.protocol == "gemini":
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(
                     f"{provider.base_url.rstrip('/')}/models?key={real_key}",
                 )
+                elapsed = int((time.monotonic() - start) * 1000)
+                if resp.status_code == 200:
+                    await record_key_success(key, db)
+                    return {"key_id": key_id, "alias": alias, "success": True, "message": "Key is valid", "latency_ms": elapsed}
+                msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                await record_key_failure(key, db, classify_status_code(resp.status_code), msg, resp.status_code)
+                return {"key_id": key_id, "alias": alias, "success": False, "message": msg, "latency_ms": elapsed}
+
         else:
-            return _done(False, "Test not supported for this protocol", "config")
+            return {"key_id": key_id, "alias": alias, "success": False, "message": "Test not supported for custom protocol"}
 
-        if 200 <= resp.status_code < 300:
-            return _done(True, "Key is valid", "ok")
-        return _done(
-            False,
-            f"HTTP {resp.status_code}: {resp.text[:200]}",
-            classify_status_code(resp.status_code),
-        )
     except Exception as e:
-        return _done(False, f"{type(e).__name__}: {e}", classify_exception(e))
+        elapsed = int((time.monotonic() - start) * 1000)
+        # 连接失败/超时/DNS 等：只记录错误，不改 key 状态
+        await record_key_failure(key, db, classify_exception(e), str(e)[:500])
+        return {"key_id": key_id, "alias": alias, "success": False, "message": str(e)[:200], "latency_ms": elapsed}
 
 
-async def _apply_probe(key: ApiKey, probe: dict, db: AsyncSession) -> None:
-    """把探测结果写入 key 状态（连不通不弃用；401/403 需连续确认；429 冷却）。"""
-    from app.utils.key_health import mark_failure, mark_success
+@router.post("/providers/{provider_id}/keys/recover")
+async def recover_keys(provider_id: int, db: AsyncSession = Depends(get_db)):
+    """Reset inactive / rate_limited keys back to untested.
 
-    if probe["success"]:
-        mark_success(key)
-    else:
-        mark_failure(key, probe["kind"], probe["message"])
+    Used to bring back keys that were wrongly disabled by an earlier version
+    (e.g. a network outage). ``expired`` keys are left untouched because they
+    need a fresh browser login.
+    """
+    result = await db.execute(
+        select(ApiKey).where(
+            ApiKey.provider_id == provider_id,
+            ApiKey.status.in_(["inactive", "rate_limited"]),
+        )
+    )
+    keys = result.scalars().all()
+    now = datetime.now(timezone.utc)
+    for k in keys:
+        k.status = "untested"
+        k.fail_count = 0
+        k.cooldown_until = 0
+        k.last_failure_kind = ""
+        k.last_error = None
+        k.last_check_at = now
     await db.commit()
-
-
-async def _test_single_key(key: ApiKey, provider: Provider, db: AsyncSession) -> dict:
-    """Test a single key and update its status."""
-    probe = await _probe_key(key, provider)
-    await _apply_probe(key, probe, db)
-    return {"key_id": key.id, "alias": key.alias or "", **probe}
+    return {"recovered": len(keys)}
 
 
 @router.post("/api-keys/{key_id}/test", response_model=ApiKeyTestResult)
@@ -307,10 +352,10 @@ async def test_key(key_id: int, db: AsyncSession = Depends(get_db)):
     if not provider:
         raise HTTPException(404, "Provider not found")
 
-    # 与批量测试共用同一探测实现（含 opencode/cline 本地服务端分支），
-    # 状态写入走 key_health 状态机（连不通不弃用）
-    probe = await _probe_key(key, provider)
-    await _apply_probe(key, probe, db)
-    return ApiKeyTestResult(
-        success=probe["success"], message=probe["message"], latency_ms=probe["latency_ms"]
-    )
+    real_key = decrypt_value(key.key_value)
+    start = time.monotonic()
+
+    # 与批量测试共用同一实现（含 opencode 本地服务端分支）
+    result = await _test_single_key(key, provider, db)
+    return ApiKeyTestResult(success=result["success"], message=result["message"],
+                            latency_ms=result.get("latency_ms"))

@@ -91,6 +91,9 @@ class ApiKeyOut(_Base):
     oauth_expires_at: int = 0
     last_used_at: Optional[datetime] = None
     last_error: Optional[str] = None
+    fail_count: int = 0
+    last_failure_kind: str = ""
+    cooldown_until: int = 0
     created_at: Optional[datetime] = None
 
     class Config:

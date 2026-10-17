@@ -38,6 +38,7 @@ export const deleteKey = (id: number) => api.delete('/api/api-keys/' + id);
 export const testKey = (id: number) => api.post('/api/api-keys/' + id + '/test');
 export const testAllKeys = (providerId: number) => api.post('/api/providers/' + providerId + '/keys/test-all');
 export const deleteInvalidKeys = (providerId: number) => api.delete('/api/providers/' + providerId + '/keys/invalid');
+export const recoverKeys = (providerId: number) => api.post('/api/providers/' + providerId + '/keys/recover');
 
 // Models
 export const getModels = (providerId: number) => api.get('/api/providers/' + providerId + '/models');

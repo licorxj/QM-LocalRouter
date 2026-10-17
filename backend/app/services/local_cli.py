@@ -351,6 +351,9 @@ async def refresh_cli_token(db: AsyncSession, api_key: ApiKey) -> None:
             api_key.oauth_expires_at = int(time.time() + 3600)
     api_key.status = "active"
     api_key.last_error = ""
+    api_key.fail_count = 0
+    api_key.cooldown_until = 0
+    api_key.last_failure_kind = ""
     await db.commit()
 
 

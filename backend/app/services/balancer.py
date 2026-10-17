@@ -8,6 +8,7 @@ from app.database import async_session
 from app.models.strategy import Strategy, StrategyRule
 from app.models.api_key import ApiKey
 from app.models.rotation_state import RotationState
+from app.utils.key_health import revive_expired_cooldown
 
 
 class KeyUsageTracker:
@@ -154,23 +155,15 @@ class Balancer:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def select_rule(
-        self, strategy: Strategy, exclude_rule_ids: set | None = None
-    ) -> StrategyRule | None:
+    async def select_rule(self, strategy: Strategy) -> StrategyRule | None:
         result = await self.db.execute(
             select(StrategyRule)
             .where(StrategyRule.strategy_id == strategy.id, StrategyRule.is_active == True)
             .order_by(StrategyRule.priority, StrategyRule.id)
         )
-        rules = list(result.scalars().all())
+        rules = result.scalars().all()
         if not rules:
             return None
-
-        # 重试时排除已失败的规则，实现真正的 failover；
-        # 若所有规则都已被排除，则回退为原列表（重试总比直接失败好）
-        if exclude_rule_ids:
-            remaining = [r for r in rules if r.id not in exclude_rule_ids]
-            rules = remaining or rules
 
         method = strategy.lb_strategy
 
@@ -211,41 +204,39 @@ class Balancer:
 
         return rules[0]
 
-    async def select_key(
-        self, provider_id: int, strategy: Strategy | None = None,
-        exclude_key_ids: set | None = None,
-    ) -> ApiKey | None:
+    async def select_key(self, provider_id: int, strategy: Strategy | None = None) -> ApiKey | None:
         """Select an API key based on strategy's key_strategy and switch thresholds.
 
-        取 key 规则（避免"连不通就把整个 provider 判死"）：
-        1. 先把冷却到期的 rate_limited key 自动恢复为 active；
-        2. 候选池 = 该 provider 下全部 key（除 exclude_key_ids），
-           优先 status 为 active/untested 或限流已冷却的；
-        3. 一个可用 key 都没有时，回退到全部 key（宁可试一把，也不直接失败）。
+        Keys in rate-limit cooldown are skipped; once the cooldown elapses they are
+        automatically revived to ``active`` (network blips never disable a key).
         """
-        from app.utils.key_health import is_usable, restore_due_keys
-
-        await restore_due_keys(self.db, provider_id)
-
         result = await self.db.execute(
             select(ApiKey)
-            .where(ApiKey.provider_id == provider_id)
+            .where(
+                ApiKey.provider_id == provider_id,
+                ApiKey.status.in_(["active", "untested", "rate_limited"]),
+            )
             .order_by(ApiKey.id)
         )
-        keys = list(result.scalars().all())
+        all_keys = result.scalars().all()
+        keys = []
+        revived = False
+        now = int(time.time())
+        for k in all_keys:
+            if k.status == "rate_limited":
+                if (k.cooldown_until or 0) > now:
+                    continue  # 仍在冷却窗口内，暂不参与轮询
+                if revive_expired_cooldown(k, now):
+                    revived = True
+            keys.append(k)
+        if revived:
+            await self.db.commit()
         if not keys:
             return None
 
-        if exclude_key_ids:
-            remaining = [k for k in keys if k.id not in exclude_key_ids]
-            keys = remaining or keys
-
-        usable = [k for k in keys if is_usable(k.status, k.status_until)]
-        pool = usable or keys
-
         if not strategy:
             # Fallback: weighted random
-            return self._weighted_random(pool)
+            return self._weighted_random(keys)
 
         key_method = strategy.key_strategy
         switch_mode = strategy.key_switch_mode
@@ -254,15 +245,15 @@ class Balancer:
 
         # Filter out keys that have hit their threshold
         eligible = []
-        for k in pool:
+        for k in keys:
             over_rpm = switch_mode in ("rpm_threshold", "both") and _key_tracker.is_over_rpm(k.id, rpm_threshold)
             over_count = switch_mode in ("count_threshold", "both") and _key_tracker.is_over_count(k.id, count_threshold)
             if not over_rpm and not over_count:
                 eligible.append(k)
 
-        # If all keys are throttled, fall back to the whole pool (best effort)
+        # If all keys are throttled, fall back to all keys (best effort)
         if not eligible:
-            eligible = pool
+            eligible = keys
 
         # Apply key strategy
         if key_method == "round_robin":

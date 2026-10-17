@@ -638,4 +638,7 @@ async def refresh_key(db, api_key) -> None:
     api_key.oauth_refresh = encrypt_value(json.dumps(updated))
     api_key.status = "active"
     api_key.last_error = ""
+    api_key.fail_count = 0
+    api_key.cooldown_until = 0
+    api_key.last_failure_kind = ""
     await db.commit()

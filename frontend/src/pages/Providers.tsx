@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getProviders, createProvider, updateProvider, deleteProvider,
   searchIcons, saveIcon, getHotProviders, getOnlineProviders, refreshOnlineProviders, getOauthProfiles,
-  getKeys, createKey, createKeysBatch, deleteKey, testKey, testAllKeys, deleteInvalidKeys,
+  getKeys, createKey, createKeysBatch, deleteKey, testKey, testAllKeys, deleteInvalidKeys, recoverKeys,
   startOauthLogin, getOauthStatus, getCliPlatforms, cliDetect, cliImport, cliBrowserStart, cliStatus,
   getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testAllModels, deleteInvalidModels, clearModels,
 } from '../services/api';
@@ -130,6 +130,7 @@ export default function Providers() {
   const [testingKeyId, setTestingKeyId] = useState<number | null>(null);
   const [testingAll, setTestingAll] = useState(false);
   const [deletingInvalid, setDeletingInvalid] = useState(false);
+  const [recoveringKeys, setRecoveringKeys] = useState(false);
 const [testingAllModels, setTestingAllModels] = useState(false);
 const [deletingInvalidModels, setDeletingInvalidModels] = useState(false);
 const [clearingModels, setClearingModels] = useState(false);
@@ -336,6 +337,23 @@ const [clearingModels, setClearingModels] = useState(false);
     onError: () => {
       toast({ title: t('providers.deleteFailed'), variant: 'destructive' });
       setDeletingInvalid(false);
+    },
+  });
+
+    const recoverKeysMut = useMutation({
+    mutationFn: () => {
+      if (!selectedProvider) return Promise.reject();
+      setRecoveringKeys(true);
+      return recoverKeys(selectedProvider.id);
+    },
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['keys', selectedProvider?.id] });
+      toast({ title: t('providers.keysRecovered') + ': ' + (res.data?.recovered ?? 0), variant: 'success' });
+      setRecoveringKeys(false);
+    },
+    onError: () => {
+      toast({ title: t('providers.deleteFailed'), variant: 'destructive' });
+      setRecoveringKeys(false);
     },
   });
 
@@ -884,7 +902,8 @@ const createModelMut = useMutation({
 
   function getKeyStatusBadge(status: string) {
     if (status === 'active') return <Badge className='bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs'>{t('providers.keyStatusActive')}</Badge>;
-    if (status === 'inactive' || status === 'expired' || status === 'rate_limited') return <Badge className='bg-red-500/10 text-red-400 border border-red-500/20 text-xs'>{t('providers.keyStatusInactive')}</Badge>;
+    if (status === 'rate_limited') return <Badge className='bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs'>{t('providers.keyStatusRateLimited')}</Badge>;
+    if (status === 'inactive' || status === 'expired') return <Badge className='bg-red-500/10 text-red-400 border border-red-500/20 text-xs'>{t('providers.keyStatusInactive')}</Badge>;
     return <Badge className='bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs'>{t('providers.keyStatusUntested')}</Badge>;
   }
 
@@ -1020,7 +1039,10 @@ const createModelMut = useMutation({
                       <TableCell>{k.alias || '-'}</TableCell>
                       <TableCell>{k.weight}</TableCell>
                       <TableCell>{getKeyStatusBadge(k.status)}</TableCell>
-                      <TableCell className='text-xs text-muted-foreground max-w-[200px] truncate'>{k.last_error || '-'}</TableCell>
+                      <TableCell className='text-xs text-muted-foreground max-w-[200px] truncate' title={k.last_error || ''}>
+                        {k.last_error || '-'}
+                        {k.fail_count > 0 && <span className='ml-1 text-amber-400'>[{t('providers.authFailCount')}:{k.fail_count}]</span>}
+                      </TableCell>
                       <TableCell>
                         <div className='flex gap-1'>
                           <Button variant='ghost' size='sm' className='h-7' onClick={() => testKeyMut.mutate(k.id)} disabled={testingKeyId === k.id}>{testingKeyId === k.id ? <Loader2 className='w-3 h-3 animate-spin' /> : <Zap className='w-3 h-3' />}</Button>

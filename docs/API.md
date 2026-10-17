@@ -147,6 +147,7 @@ Returns all active strategy names.
 | POST | /api/api-keys/{id}/test | Test key |
 | POST | /api/providers/{id}/keys/test-all | Batch test |
 | DELETE | /api/providers/{id}/keys/invalid | Delete invalid |
+| POST | /api/providers/{id}/keys/recover | Reset inactive/rate-limited keys to untested |
 
 ### Models
 

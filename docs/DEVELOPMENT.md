@@ -337,8 +337,33 @@ and only falls back to direct mode, so existing clients are unaffected;
 new provider columns (`key_strategy`, `key_switch_mode`, `key_rpm_threshold`,
 `key_count_threshold`, added in `database._add_missing_columns`), so
 `Balancer.select_key` applies the platform multi-key policy — strategy routing
-keeps using the strategy's own policy. Auth (401/403) and 429 failures mark the
-key like `_try_forward` does.
+keeps using the strategy's own policy. Key bookkeeping on failure goes through
+`utils/key_health.record_key_failure` (see *API Key health policy* below); it is
+done once in `_handle_non_stream` / `_handle_stream` / `_try_forward`, so a single
+failure is never counted twice.
+
+### API Key health policy
+`utils/key_health.py` is the single place that decides whether a failure may
+change a key's status. **A network blip never invalidates a key.**
+
+- Failures are classified: `auth` (401/403), `rate_limit` (429), `server` (5xx),
+  `network` (`httpx.RequestError`, connect/timeout/DNS/TLS), `other`.
+- `network` / `server` / `other`: only `last_error` / `last_failure_kind` /
+  `last_check_at` are written. `status` is untouched and the auth counter is not
+  incremented.
+- `auth`: `fail_count += 1`; only after `AUTH_FAIL_THRESHOLD` (3) **consecutive**
+  auth failures is the key set to `inactive`. Any success (`record_key_success`)
+  resets `fail_count` and reactivates the key.
+- `rate_limit`: status becomes `rate_limited` plus `cooldown_until = now + 60s`.
+  `Balancer.select_key` skips keys still in cooldown and revives the ones whose
+  cooldown has elapsed (legacy rows with `cooldown_until = 0` revive immediately).
+- `expired` is only set by OAuth flows (`workbuddy.ensure_fresh_token`).
+
+Columns `fail_count`, `last_failure_kind`, `cooldown_until`, `last_check_at` are
+added by the idempotent migration in `database._add_missing_columns`.
+`POST /api/providers/{id}/keys/recover` resets `inactive` / `rate_limited` keys
+back to `untested` (used to undo keys disabled by earlier versions);
+`expired` keys are left untouched because they need a fresh login.
 
 ### Passthrough (same format)
 `Forwarder._passthrough_plan` forwards the request byte-for-byte when the client

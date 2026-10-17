@@ -1,202 +1,133 @@
-"""API Key 健康状态判定 —— 原则：**连不通 ≠ key 弃用**。
+"""API Key 健康状态策略（失败分类 + 防抖 + 自动复活）。
 
-背景：历史实现里，只要一次探测/转发失败（非 200 一律算），key 就被写成
-`inactive`；限流（429）写成 `rate_limited` 之后又没有任何恢复路径。结果是
-「网络抖一下 / 上端 429 一次 → 整个 provider 再也选不出 key」，请求直接以
-`no active API key for provider ...` 失败。
+设计原则：**网络抖动不等于 key 失效**。
 
-本模块把失败原因分级，只有「上游明确答复这个凭证不能用」才允许弃用：
-
-|failure kind   | 触发条件                                | 对 key 的处理                |
-|----------------|-----------------------------------------|------------------------------|
-| ``auth``       | HTTP 401 / 403                          | 连续 N 次才置 inactive（默认 2）|
-| ``rate_limit`` | HTTP 429                                | 置 rate_limited + 冷却截止时间 |
-| ``config``     | HTTP 400/404/405/422（模型/路径/参数错） | 仅记录 last_error            |
-| ``upstream``   | HTTP 5xx / 408                | 仅记录 last_error            |
-| ``unreachable``| DNS/拒连/TLS/超时/断流（连不通）          | 仅记录 last_error            |
-| ``unknown``    | 其它                                    | 仅记录 last_error            |
-
-冷却到期的 ``rate_limited`` key 由 :func:`is_usable` / :func:`restore_due_keys`
-自动复活，不需要人工干预。
-
-环境变量：
-- ``QM_KEY_AUTH_CONFIRM_THRESHOLD``  连续多少次 401/403 才弃用（默认 2，设 1 =旧行为）
-- ``QM_KEY_RATE_LIMIT_COOLDOWN``     429 冷却秒数（默认 60，设 0 = 不冷却）
+- 网络类错误（连接被拒 / DNS 失败 / 超时 / TLS 失败）与上游 5xx 属于环境问题，
+  只写 ``last_error`` 便于排查，**绝不修改 status**，也不累加鉴权失败计数。
+- 只有鉴权类错误（401/403）才可能让 key 失效，且需要**连续**达到
+  ``AUTH_FAIL_THRESHOLD`` 次才置为 ``inactive``；任意一次成功即清零计数。
+- 429 只进入 ``rate_limited`` + ``cooldown_until`` 冷却窗口，冷却到期由
+  :func:`app.services.balancer.Balancer.select_key` 自动复活，无需人工干预。
 """
-import os
 import time
+from datetime import datetime, timezone
 
-# --- 可调阈值 ---------------------------------------------------------------
-def _env_int(name: str, default: int) -> int:
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.api_key import ApiKey
+
+# 连续鉴权失败多少次才把 key 标记为 inactive
+AUTH_FAIL_THRESHOLD = 3
+# 429 后的冷却秒数
+RATE_LIMIT_COOLDOWN_SECONDS = 60
+
+KIND_AUTH = "auth"
+KIND_RATE_LIMIT = "rate_limit"
+KIND_NETWORK = "network"
+KIND_SERVER = "server"
+KIND_OTHER = "other"
+
+# 只有这些状态会被视为「key 本身的问题」
+DISABLING_KINDS = (KIND_AUTH,)
+
+
+def classify_status_code(status_code: int) -> str:
+    """Map an HTTP status code to a failure kind."""
     try:
-        return int(os.environ.get(name, "") or default)
+        code = int(status_code)
     except (TypeError, ValueError):
-        return default
-
-
-#: 连续多少次 401/403 才把 key 置为 inactive（1 = 旧行为，立即弃用）
-AUTH_CONFIRM_THRESHOLD = _env_int("QM_KEY_AUTH_CONFIRM_THRESHOLD", 2)
-#: 429 后的冷却秒数；到期自动恢复 active
-RATE_LIMIT_COOLDOWN = _env_int("QM_KEY_RATE_LIMIT_COOLDOWN", 60)
-
-AUTH_STATUS = (401, 403)
-RATE_LIMIT_STATUS = (429,)
-
-#: 这些状态属于「可用」，inactive/expired 才算不可用
-USABLE_STATUS = ("active", "untested")
-
-# httpx 传输层异常名（ConnectError/ReadTimeout/SSLError/...）→ 连不通
-_TRANSPORT_EXC_NAMES = {
-    "TransportError", "TimeoutException", "ConnectError", "ConnectTimeout",
-    "ReadTimeout", "WriteTimeout", "PoolTimeout", "ReadError", "WriteError",
-    "CloseError", "ProxyError", "UnsupportedProtocol", "LocalProtocolError",
-    "RemoteProtocolError", "NetworkError", "SSLError", "SSLCertVerificationError",
-    "OSError", "TimeoutError", "ConnectionError",
-}
-
-
-def now_ts() -> int:
-    return int(time.time())
-
-
-# ---------------------------------------------------------------------------
-# 失败原因分类
-# ---------------------------------------------------------------------------
-def classify_status_code(status_code: int | None) -> str:
-    """把上游 HTTP 状态码归类为 failure kind。"""
-    if status_code is None:
-        return "unknown"
-    code = int(status_code)
-    if 200 <= code < 300:
-        return "ok"
-    if code in AUTH_STATUS:
-        return "auth"
-    if code in RATE_LIMIT_STATUS:
-        return "rate_limit"
-    if code in (408, 425, 409, 500, 502, 503, 504, 529):
-        return "upstream"
-    if code in (400, 404, 405, 422):
-        # 模型名/路径/参数不对 —— 与 key 是否有效无关，绝不能据此弃用
-        return "config"
-    return "client_error"
+        return KIND_OTHER
+    if code in (401, 403):
+        return KIND_AUTH
+    if code == 429:
+        return KIND_RATE_LIMIT
+    if code >= 500:
+        return KIND_SERVER
+    return KIND_OTHER
 
 
 def classify_exception(exc: BaseException) -> str:
-    """把异常归类为 failure kind（连不通 → unreachable，永不弃用）。"""
-    names = {c.__name__ for c in type(exc).__mro__}
-    if "HTTPStatusError" in names:
-        resp = getattr(exc, "response", None)
-        return classify_status_code(getattr(resp, "status_code", None))
-    if names & _TRANSPORT_EXC_NAMES:
-        return "unreachable"
-    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
-        return "unreachable"
-    return "unknown"
-
-
-#: 会不会影响 key 的可用状态（false = 只记录错误，不弃用）
-DEGRADES_KEY = ("auth", "rate_limit")
-
-
-# ---------------------------------------------------------------------------
-# 状态判定
-# ---------------------------------------------------------------------------
-def is_usable(status: str | None, status_until: int | None = 0, now: int | None = None) -> bool:
-    """key 现在能不能用。rate_limited 冷却到期即视为可用。"""
-    st = (status or "active").lower()
-    if st in USABLE_STATUS:
-        return True
-    if st == "rate_limited":
-        return int(status_until or 0) <= (now or now_ts())
-    return False
-
-
-def cooldown_remaining(status_until: int | None, now: int | None = None) -> int:
-    return max(0, int(status_until or 0) - (now or now_ts()))
-
-
-def next_status(current_status: str | None, fail_count: int, kind: str,
-                *, now: int | None = None, cooldown: int | None = None) -> tuple[str | None, int, int]:
-    """根据失败原因算出新的 (status, fail_count, status_until)。
-
-    - ``status`` 为 ``None`` 表示状态不变（调用方只更新 last_error）；
-    - ``fail_count`` 是连续 auth 失败次数，其它原因不累加。
-    """
-    ts = now or now_ts()
-    cur_fail = int(fail_count or 0)
-    if kind == "ok":
-        return "active", 0, 0
-    if kind == "auth":
-        cur_fail += 1
-        if cur_fail >= max(1, AUTH_CONFIRM_THRESHOLD):
-            return "inactive", cur_fail, 0
-        # 尚未确认：保持原状态，仅累计失败次数
-        return None, cur_fail, 0
-    if kind == "rate_limit":
-        cd = RATE_LIMIT_COOLDOWN if cooldown is None else int(cooldown)
-        if cd > 0:
-            return "rate_limited", cur_fail, ts + cd
-        # 不冷却：保持原状态，下一次请求直接重试
-        return None, cur_fail, 0
-    # config / upstream / unreachable / client_error / unknown —— 连不通或配置问题，
-    # 一律不改状态，避免好 key 被误杀。
-    return None, cur_fail, 0
-
-
-# ---------------------------------------------------------------------------
-# ORM 便捷封装
-# ---------------------------------------------------------------------------
-def _get(obj, name, default):
-    return getattr(obj, name, default) if obj is not None else default
-
-
-def mark_success(key) -> str:
-    """探测/调用成功：清错误、复位计数、清除冷却。"""
-    key.status = "active"
-    key.last_error = None
-    if hasattr(key, "fail_count"):
-        key.fail_count = 0
-    if hasattr(key, "status_until"):
-        key.status_until = 0
-    return "active"
-
-
-def mark_failure(key, kind: str, message: str = "") -> str:
-    """按失败原因更新 key 状态，返回最终 status。"""
-    status, fail_count, status_until = next_status(
-        _get(key, "status", "active"), _get(key, "fail_count", 0), kind,
+    """Map an exception raised while calling upstream to a failure kind."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return classify_status_code(exc.response.status_code)
+    if isinstance(exc, httpx.RequestError):
+        # ConnectError / ConnectTimeout / ReadTimeout / ProxyError ...
+        return KIND_NETWORK
+    text = str(exc).lower()
+    network_markers = (
+        "connect", "timeout", "timed out", "network", "dns", "unreachable",
+        "connection", "ssl", "eof", "broken pipe", "reset by peer",
     )
-    if status is not None:
-        key.status = status
-    if hasattr(key, "fail_count"):
-        key.fail_count = fail_count
-    if hasattr(key, "status_until"):
-        key.status_until = status_until
-    if message:
-        key.last_error = message[:500]
-    return getattr(key, "status", "active")
+    if any(m in text for m in network_markers):
+        return KIND_NETWORK
+    if "401" in text or "403" in text or "unauthorized" in text or "forbidden" in text:
+        return KIND_AUTH
+    return KIND_OTHER
 
 
-async def restore_due_keys(db, provider_id: int | None = None) -> int:
-    """把冷却到期的 rate_limited key 自动恢复为 active，返回恢复条数。
+def is_disabling_kind(kind: str) -> bool:
+    """Whether this failure kind is allowed to eventually mark a key inactive."""
+    return kind in DISABLING_KINDS
 
-    在选key（Balancer.select_key）时调用，实现「限流只冷却、不永久弃用」。
+
+def revive_expired_cooldown(api_key: ApiKey, now: int | None = None) -> bool:
+    """If a rate-limited key's cooldown has elapsed, bring it back to active.
+
+    Returns True when the key was revived (caller should commit).
     """
-    from sqlalchemy import update
+    if api_key.status != "rate_limited":
+        return False
+    until = int(api_key.cooldown_until or 0)
+    if until > int(now if now is not None else time.time()):
+        return False
+    api_key.status = "active"
+    api_key.cooldown_until = 0
+    api_key.last_failure_kind = ""
+    api_key.last_error = None
+    return True
 
-    from app.models.api_key import ApiKey
 
-    ts = now_ts()
-    stmt = (
-        update(ApiKey)
-        .where(ApiKey.status == "rate_limited", ApiKey.status_until <= ts)
-        .values(status="active", status_until=0, last_error=None)
-    )
-    if provider_id is not None:
-        stmt = stmt.where(ApiKey.provider_id == provider_id)
-    result = await db.execute(stmt)
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-    return int(result.rowcount or 0)
+async def record_key_success(api_key: ApiKey, db: AsyncSession) -> None:
+    """Mark a successful call: activate the key and clear all failure state."""
+    api_key.status = "active"
+    api_key.fail_count = 0
+    api_key.last_failure_kind = ""
+    api_key.last_error = None
+    api_key.cooldown_until = 0
+    api_key.last_check_at = datetime.now(timezone.utc)
+    await db.commit()
+
+
+async def record_key_failure(
+    api_key: ApiKey,
+    db: AsyncSession,
+    kind: str,
+    message: str = "",
+    status_code: int | None = None,
+) -> str:
+    """Apply the failure policy and persist. Returns the resulting status.
+
+    - auth: increment the consecutive counter; only mark ``inactive`` once the
+      threshold is reached (single 401/403 no longer kills a key).
+    - rate_limit: ``rate_limited`` + cooldown window (auto-revived).
+    - network / server / other: record ``last_error`` only, status untouched.
+    """
+    now = datetime.now(timezone.utc)
+    api_key.last_check_at = now
+    api_key.last_failure_kind = kind
+    api_key.last_error = (message or (f"HTTP {status_code}" if status_code else ""))[:500]
+
+    status = api_key.status or "active"
+    if kind == KIND_AUTH:
+        api_key.fail_count = int(api_key.fail_count or 0) + 1
+        if api_key.fail_count >= AUTH_FAIL_THRESHOLD:
+            status = "inactive"
+    elif kind == KIND_RATE_LIMIT:
+        status = "rate_limited"
+        api_key.cooldown_until = int(time.time()) + RATE_LIMIT_COOLDOWN_SECONDS
+    # network / server / other: 环境问题，仅记录，不改状态、不计入鉴权失败
+
+    api_key.status = status
+    await db.commit()
+    return status
