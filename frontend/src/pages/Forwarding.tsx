@@ -67,8 +67,10 @@ export default function ForwardingPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const proxyUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:12002/v1` : "http://127.0.0.1:12002/v1";
-  const betaUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:12002/v1beta` : "http://127.0.0.1:12002/v1beta";
+  // 端点地址端口取后端真实监听端口（appSettings.backend_port），不写死上游默认值
+  const backendPort = appSettings.backend_port || 12002;
+  const proxyUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:${backendPort}/v1` : `http://127.0.0.1:${backendPort}/v1`;
+  const betaUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:${backendPort}/v1beta` : `http://127.0.0.1:${backendPort}/v1beta`;
 
   // 客户端格式 → 请求端点。格式由端点决定，后端自动转换；与上游同格式时直通。
   const ENDPOINT_CARDS = [

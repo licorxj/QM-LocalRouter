@@ -191,7 +191,7 @@ export default function Sidebar() {
             <p>{t("sidebar.startServiceDesc")}</p>
             <div className="bg-muted rounded-lg p-3 font-mono text-xs space-y-1">
               <p className="text-foreground font-semibold">cd backend</p>
-              <p className="text-foreground font-semibold">python -m uvicorn app.main:app --host 0.0.0.0 --port 12002 --reload</p>
+              <p className="text-foreground font-semibold">python -m uvicorn app.main:app --host 0.0.0.0 --port {window.location.port || 12002} --reload</p>
             </div>
           </div>
         </DialogContent>

@@ -154,17 +154,28 @@ def _schedule_self_restart(delay: float = 2.0) -> None:
 
 _SENSITIVE_SETTINGS = ("jwt_secret", "admin_password_hash")
 
+
+def _with_runtime_fields(data: dict) -> dict:
+    """Attach runtime-only fields (never persisted into app_settings.json).
+
+    backend_port: the port this backend actually listens on, so the frontend can
+    build the access URL instead of hardcoding the upstream default (12002).
+    """
+    from app.config import settings as app_config
+    return {**{k: v for k, v in data.items() if k not in _SENSITIVE_SETTINGS},
+            "backend_port": app_config.PORT}
+
+
 @router.get("")
 async def get_settings():
-    data = _get_settings()
-    return {k: v for k, v in data.items() if k not in _SENSITIVE_SETTINGS}
+    return _with_runtime_fields(_get_settings())
 
 @router.put("")
 async def update_settings(data: AppSettings):
     current = _get_settings()
     current.update(data.model_dump(exclude_unset=True))
     _save_settings(current)
-    return current
+    return _with_runtime_fields(current)
 
 @router.get("/lan-ip")
 async def lan_ip():
