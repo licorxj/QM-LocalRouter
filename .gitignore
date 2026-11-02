@@ -63,6 +63,8 @@ version.json
 release/*.exe
 release/build/
 release/dist/
+release-stage/
+build/
 
 # === Generated / Scratch files ===
 *_gen.py

@@ -47,6 +47,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install -r requirements-build.txt
+          pip install pillow  # installer icon (logo.png -> app.ico), optional locally
         shell: bash
 
       - name: Build frontend
@@ -107,6 +108,23 @@ jobs:
           Compress-Archive -Path "$stage/*" -DestinationPath "$asset.zip" -Force
         shell: pwsh
 
+      # Reuses the frontend/dist and dist/apirouter.exe built above
+      # (-SkipFrontend -SkipBackend) and stages + compiles the Inno Setup
+      # installer. Version comes from the pushed v* tag via git describe.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: scripts/build-windows-installer.ps1 -SkipFrontend -SkipBackend
+        shell: pwsh
+
+      - name: Upload installer artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: apirouter-windows-installer
+          path: dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
       # The three platform jobs run in parallel, so they must NOT create/publish
       # the Release themselves: whichever finishes first would publish an
       # immutable Release and the others would fail to upload their assets.
@@ -133,7 +151,9 @@ jobs:
       - name: Create release and attach every asset
         uses: softprops/action-gh-release@v2
         with:
-          files: packages/*/*.zip
+          files: |
+            packages/*/*.zip
+            packages/*/*.exe
           fail_on_unmatched_files: true
           generate_release_notes: true
         env:
