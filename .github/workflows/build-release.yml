@@ -125,6 +125,24 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Reuses the frontend/dist and dist/{apirouter,LocalRouter} built above
+      # (--skip-frontend --skip-backend), assembles LocalRouter.app and
+      # compiles the per-user .pkg installer. Version comes from the pushed
+      # v* tag via git describe.
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        run: bash scripts/build-macos-installer.sh --skip-frontend --skip-backend
+        shell: bash
+
+      - name: Upload installer artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: apirouter-macos-installer
+          path: dist/installer/*.pkg
+          if-no-files-found: error
+          retention-days: 7
+
       # The three platform jobs run in parallel, so they must NOT create/publish
       # the Release themselves: whichever finishes first would publish an
       # immutable Release and the others would fail to upload their assets.
@@ -154,6 +172,7 @@ jobs:
           files: |
             packages/*/*.zip
             packages/*/*.exe
+            packages/*/*.pkg
           fail_on_unmatched_files: true
           generate_release_notes: true
         env:
