@@ -263,6 +263,7 @@
     "batchAdd": "Batch Add",
     "batchAddResult": "Added {success}, failed {fail}",
     "invertSelection": "Invert",
+    "freeOnly": "Free models only",
     "alreadyAdded": "Added",
     "searchFailed": "Search failed",
     "iconSet": "Icon set",

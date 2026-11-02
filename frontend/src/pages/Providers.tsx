@@ -147,6 +147,7 @@ const [clearingModels, setClearingModels] = useState(false);
   const [syncFetching, setSyncFetching] = useState(false);
   const [addSingleModelLoading, setAddSingleModelLoading] = useState<Map<string, boolean>>(new Map());
   const [syncModelSearch, setSyncModelSearch] = useState('');
+  const [syncFreeOnly, setSyncFreeOnly] = useState(false);
 
   const [iconSearchOpen, setIconSearchOpen] = useState(false);
   const [iconKeyword, setIconKeyword] = useState('');
@@ -1625,7 +1626,7 @@ const createModelMut = useMutation({
     </Dialog>
 
     {/* Sync Models Dialog */}
-    <Dialog open={syncDialogOpen} onOpenChange={v => { if (!v) { setSyncDialogOpen(false); setFetchedModels([]); setSelectedSyncIds(new Set()); setSyncModelSearch(''); } }}>
+    <Dialog open={syncDialogOpen} onOpenChange={v => { if (!v) { setSyncDialogOpen(false); setFetchedModels([]); setSelectedSyncIds(new Set()); setSyncModelSearch(''); setSyncFreeOnly(false); } }}>
       <DialogContent className='max-w-[90vw] max-h-[85vh] flex flex-col'>
         <DialogHeader>
           <DialogTitle>{t('providers.syncModelsTitle') || '同步平台模型 - ' + selectedProvider?.name}</DialogTitle>
@@ -1637,9 +1638,10 @@ const createModelMut = useMutation({
           </div>
           {(() => {
             const filteredModels = fetchedModels.filter((m: any) =>
-              !syncModelSearch || m.model_id.toLowerCase().includes(syncModelSearch.toLowerCase()) ||
+              (!syncFreeOnly || m.model_id.toLowerCase().includes('free')) &&
+              (!syncModelSearch || m.model_id.toLowerCase().includes(syncModelSearch.toLowerCase()) ||
               (m.display_name || '').toLowerCase().includes(syncModelSearch.toLowerCase()) ||
-              (m.model_type || '').toLowerCase().includes(syncModelSearch.toLowerCase())
+              (m.model_type || '').toLowerCase().includes(syncModelSearch.toLowerCase()))
             );
             const addableCount = filteredModels.filter((m: any) => !m.already_added).length;
             const selectedInFilter = filteredModels.filter((m: any) => selectedSyncIds.has(m.model_id));
@@ -1667,6 +1669,10 @@ const createModelMut = useMutation({
                 }
                 setSelectedSyncIds(newSelected);
               }}>{t('providers.invertSelection') || '反选'}</Button>
+              <label className='flex items-center gap-1.5 text-sm cursor-pointer select-none'>
+                <input type='checkbox' checked={syncFreeOnly} onChange={e => setSyncFreeOnly(e.target.checked)} className='w-4 h-4 rounded border-border accent-primary' />
+                {t('providers.freeOnly') || '只显示免费模型'}
+              </label>
             </div>
             <div className='flex items-center gap-2'>
               <span className='text-sm text-muted-foreground'>{t('providers.syncFetchedCount', { count: filteredModels.length }) || '获取到 ' + filteredModels.length + ' 个模型'}</span>

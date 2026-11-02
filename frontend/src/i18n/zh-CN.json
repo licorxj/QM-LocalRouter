@@ -263,6 +263,7 @@
     "batchAdd": "批量添加",
     "batchAddResult": "添加成功 {success} 个，失败 {fail} 个",
     "invertSelection": "反选",
+    "freeOnly": "只显示免费模型",
     "alreadyAdded": "已添加",
     "searchFailed": "搜索失败",
     "iconSet": "图标已设置",
