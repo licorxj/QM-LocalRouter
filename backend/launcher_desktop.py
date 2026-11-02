@@ -1,27 +1,44 @@
 """Desktop shell entry point for the frozen LocalRouter app.
 
 Starts the same FastAPI app as launcher.py on a background thread, then
-opens a native WebView2 window on the local UI, so the packaged app behaves
-like a desktop program instead of a console service. Closing the window
-shuts the server down and exits. launcher.py stays the console/server-mode
-entry point (apirouter.exe + run.bat).
+opens a native webview window (WebView2 on Windows, Cocoa/PyObjC on macOS)
+on the local UI, so the packaged app behaves like a desktop program instead
+of a console service. Closing the window shuts the server down and exits.
+launcher.py stays the console/server-mode entry point (apirouter.exe +
+run.bat on Windows, apirouter + run.sh on macOS/Linux).
 """
+import json
 import logging
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import webbrowser
-from ctypes import windll
+
+if sys.platform == "win32":
+    from ctypes import windll
 
 import uvicorn
 
 
 def _message_box(text: str) -> None:
     # console=False build: a native message box is the only way to reach the user
-    windll.user32.MessageBoxW(None, text, "LocalRouter", 0x10)
+    if sys.platform == "win32":
+        windll.user32.MessageBoxW(None, text, "LocalRouter", 0x10)
+    elif sys.platform == "darwin":
+        # AppleScript dialog keeps parity without another GUI toolkit; join
+        # lines with `return` because AppleScript literals cannot span lines.
+        quoted = " & return & ".join(json.dumps(line) for line in text.split("\n"))
+        script = (
+            f"display dialog {quoted} with title \"LocalRouter\" "
+            'buttons {"OK"} default button "OK"'
+        )
+        subprocess.run(["osascript", "-e", script], check=False)
+    else:
+        print(text, file=sys.stderr)
 
 
 def _port_free(host: str, port: int) -> bool:
@@ -101,12 +118,15 @@ def main() -> int:
             "LocalRouter", url, width=1280, height=820, min_size=(960, 640)
         )
         webview.start()
-    except Exception as exc:  # e.g. WebView2 runtime missing
+    except Exception as exc:  # e.g. WebView2 runtime missing on Windows
         logging.getLogger(__name__).exception("webview failed")
-        _message_box(
-            f"桌面窗口启动失败（{exc}），已在默认浏览器中打开。\n"
-            f"请安装 Microsoft Edge WebView2 Runtime 后重试。"
-        )
+        if sys.platform == "win32":
+            _message_box(
+                f"桌面窗口启动失败（{exc}），已在默认浏览器中打开。\n"
+                f"请安装 Microsoft Edge WebView2 Runtime 后重试。"
+            )
+        else:
+            _message_box(f"桌面窗口启动失败（{exc}），已在默认浏览器中打开。")
         webbrowser.open(url)
         return 1
 

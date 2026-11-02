@@ -16,6 +16,7 @@ EXEs produced broken binaries):
                frozen exe keeps all user state next to itself
 """
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_all
 
@@ -35,22 +36,28 @@ def _without_ucrt(entries):
 
 litellm_bins = _without_ucrt(litellm_bins)
 
-# The desktop shell loads WebView2 through pythonnet/clr at runtime; pull the
-# packages and their interop DLLs in explicitly. Skipped when pywebview is
+# The desktop shell opens a native webview window: WebView2 through
+# pythonnet/clr on Windows, Cocoa through PyObjC on macOS (pywebview picks the
+# backend per platform). Pull the packages in explicitly; each one is collected
+# independently so a failing pythonnet (no usable runtime on macOS/Linux)
+# must not drop the webview collection. Skipped entirely when pywebview is
 # not installed (server-only build environments).
 desktop_datas, desktop_bins, desktop_hidden = [], [], []
-try:
-    for _pkg in ("webview", "pythonnet", "clr_loader"):
+for _pkg in ("webview", "pythonnet", "clr_loader"):
+    try:
         _d, _b, _h = collect_all(_pkg)
         desktop_datas += _d
         desktop_bins += _without_ucrt(_b)
         desktop_hidden += _h
+    except Exception:
+        pass
+if sys.platform == "darwin":
+    desktop_hidden += ["webview.platforms.cocoa"]
+else:
     desktop_hidden += [
         "webview.platforms.winforms",
         "webview.platforms.edgechromium",
     ]
-except Exception:
-    pass
 
 _icon = "build/app.ico" if os.path.exists("build/app.ico") else None
 
