@@ -84,7 +84,7 @@ def setup_env() -> bool:
     try:
         ENV_FILE.write_text(
             "APP_NAME=LLM API Router\n"
-            "APP_VERSION=2.0.6\n"
+            "APP_VERSION=2.0.7\n"
             f"HOST=127.0.0.1\n"
             f"BACKEND_PORT=12002\n"
             f"LOG_RETENTION_DAYS=30\n"
