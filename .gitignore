@@ -78,3 +78,11 @@ backend/data/.encryption_key
 .DS_Store
 Thumbs.db
 desktop.ini
+assets/icon/out/
+
+# --- 本地运行态 / 第三方网关（不入库） ---
+.zcode/
+config.json.*
+opencode2api.exe
+opencode.exe
+run/

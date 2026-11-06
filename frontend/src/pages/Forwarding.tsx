@@ -10,13 +10,13 @@ import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "../components/ui/select";
-import { Globe, Copy, Check, Box, Save, Loader2, Route } from "lucide-react";
+import { PageHeader, CodeBlock } from "../components/shared";
+import { Globe, Box, Save, Loader2, Route } from "lucide-react";
 
 export default function ForwardingPage() {
   const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
   const [lanIp, setLanIp] = useState("");
-  const [appSettings, setAppSettings] = useState({
+  const [appSettings, setAppSettings] = useState<Record<string, any>>({
     output_protocol: "openai",
     default_model: "",
     default_provider_id: 0,
@@ -60,13 +60,6 @@ export default function ForwardingPage() {
     onError: () => toast({ title: t("settings.configSaveFailed"), variant: "destructive" }),
   });
 
-  const copyCode = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast({ title: t("common.copied"), variant: "success" });
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   // 端点地址端口取后端真实监听端口（appSettings.backend_port），不写死上游默认值
   const backendPort = appSettings.backend_port || 12002;
   const proxyUrl = appSettings.lan_access && lanIp ? `http://${lanIp}:${backendPort}/v1` : `http://127.0.0.1:${backendPort}/v1`;
@@ -97,13 +90,14 @@ export default function ForwardingPage() {
   ];
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title={t("sidebar.forwarding")} description={t("settings.clientEndpointsDesc")} />
 
       {/* Route Management Model */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Box className="h-4 w-4 text-amber-400" />
+            <Box className="h-4 w-4 text-warning" aria-hidden="true" />
             <CardTitle className="text-base">{t("settings.routeModel")}</CardTitle>
           </div>
         </CardHeader>
@@ -153,7 +147,7 @@ export default function ForwardingPage() {
       <Card className="card-hover">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-purple-400" />
+            <Globe className="h-4 w-4 text-info" aria-hidden="true" />
             <CardTitle className="text-base">{t("settings.clientEndpoints")}</CardTitle>
           </div>
         </CardHeader>
@@ -166,15 +160,12 @@ export default function ForwardingPage() {
                 <div key={ep.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <Badge variant={active ? "default" : "secondary"} className={active ? "bg-cyan-600 hover:bg-cyan-700" : ""}>{ep.label}</Badge>
+                      <Badge variant={active ? "default" : "secondary"}>{ep.label}</Badge>
                       <code className="text-xs font-mono text-muted-foreground">{ep.method} {ep.path}</code>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyCode(ep.curl)} title={t("settings.copyCurl")}>
-                      <Copy className="h-3 w-3" />
-                    </Button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1.5">{ep.desc}</p>
-                  <pre className="text-[11px] leading-relaxed bg-muted p-2.5 rounded-md font-mono overflow-x-auto text-foreground mt-2">{ep.curl}</pre>
+                  <CodeBlock code={ep.curl} className="mt-2" />
                 </div>
               );
             })}
@@ -187,7 +178,7 @@ export default function ForwardingPage() {
       <Card className="card-hover">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-blue-400" />
+            <Globe className="h-4 w-4 text-info" aria-hidden="true" />
             <CardTitle className="text-base">{t("settings.networkAccess")}</CardTitle>
           </div>
         </CardHeader>
@@ -197,18 +188,13 @@ export default function ForwardingPage() {
               <Label className="text-sm font-medium">{t("settings.lanAccess")}</Label>
               <p className="text-xs text-muted-foreground mt-0.5">{t("settings.lanAccessDesc")}</p>
             </div>
-            <Switch checked={appSettings.lan_access} onCheckedChange={(v) => setAppSettings({ ...appSettings, lan_access: v })} />
+            <Switch checked={appSettings.lan_access} onCheckedChange={(v) => setAppSettings({ ...appSettings, lan_access: v })} aria-label={t("settings.lanAccess")} />
           </div>
           {appSettings.lan_access && lanIp && (
             <div className="mt-4 pt-4 border-t">
               <Label className="text-sm font-medium">{t("settings.lanAddress")}</Label>
               <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.lanAddressDesc")}</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{proxyUrl}</code>
-                <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyCode(proxyUrl)}>
-                  {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
-                </Button>
-              </div>
+              <CodeBlock code={proxyUrl} />
             </div>
           )}
           <div className="flex justify-end mt-4">
@@ -224,7 +210,7 @@ export default function ForwardingPage() {
       <Card className="card-hover">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <Route className="h-4 w-4 text-green-400" />
+            <Route className="h-4 w-4 text-success" aria-hidden="true" />
             <CardTitle className="text-base">{t("settings.proxyConfig")}</CardTitle>
           </div>
         </CardHeader>
@@ -232,16 +218,11 @@ export default function ForwardingPage() {
           <div>
             <Label className="text-sm font-medium">{t("settings.proxyAddress")}</Label>
             <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.proxyAddressDesc")}</p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{proxyUrl}</code>
-              <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyCode(proxyUrl)}>
-                {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
-              </Button>
-            </div>
+            <CodeBlock code={proxyUrl} />
             <p className="text-xs text-muted-foreground mt-2">{t("settings.proxyUsageDesc")}</p>
             {appSettings.lan_access && lanIp && (
               <p className="text-xs text-muted-foreground mt-2">
-                <span className="text-green-400 font-medium">LAN:</span> {t("settings.lanAddressDesc")}: <code className="bg-muted px-1 rounded">{proxyUrl}</code>
+                <span className="font-medium text-success">LAN:</span> {t("settings.lanAddressDesc")}: <code className="rounded bg-muted px-1">{proxyUrl}</code>
               </p>
             )}
           </div>
@@ -249,14 +230,9 @@ export default function ForwardingPage() {
           <div>
             <Label className="text-sm font-medium">{t("settings.callExample")}</Label>
             <p className="text-xs text-muted-foreground mt-0.5 mb-2">{t("settings.callExampleDesc")}</p>
-            <div className="relative">
-              <pre className="text-xs bg-muted p-4 rounded-lg overflow-x-auto text-foreground font-mono leading-relaxed">{`curl ${proxyUrl}/chat/completions \\
+            <CodeBlock code={`curl ${proxyUrl}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "your-strategy", "messages": [{"role": "user", "content": "Hello"}]}'`}</pre>
-              <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7" onClick={() => copyCode(`curl ${proxyUrl}/chat/completions`)}>
-                <Copy className="h-3 w-3" />
-              </Button>
-            </div>
+  -d '{"model": "your-strategy", "messages": [{"role": "user", "content": "Hello"}]}'`} />
           </div>
         </CardContent>
       </Card>

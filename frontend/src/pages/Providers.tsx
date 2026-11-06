@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getProviders, createProvider, updateProvider, deleteProvider,
   searchIcons, saveIcon, getHotProviders, getOnlineProviders, refreshOnlineProviders, getOauthProfiles,
+  getFreeModels, joinFreeChannel,
   getKeys, createKey, createKeysBatch, deleteKey, testKey, testAllKeys, deleteInvalidKeys, recoverKeys,
   startOauthLogin, getOauthStatus, getCliPlatforms, cliDetect, cliImport, cliBrowserStart, cliStatus,
   getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testAllModels, deleteInvalidModels, clearModels,
@@ -20,16 +21,17 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '.
 import { Switch } from '../components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Separator } from '../components/ui/separator';
+import { StatusBadge, ConfirmDialog } from '../components/shared';
 import {
   Plus, Pencil, Trash2, Trash, Server, Wand2, KeyRound, Zap, Loader2, RefreshCw, Play, Layers, Cpu, Terminal,
-  Video, Mic, Box, ChevronRight, ImageIcon, Search, X, Flame, Copy, Globe,
+  Video, Mic, Box, ChevronRight, ImageIcon, Search, X, Flame, Copy, Globe, Gift, AlertTriangle,
 } from 'lucide-react';
 
 const protocolColors: Record<string, string> = {
-  openai: 'bg-green-500/10 text-green-400 border-green-500/20',
-  claude: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-  gemini: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  custom: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  openai: 'bg-success/12 text-success border-success/25',
+  claude: 'bg-primary/12 text-primary border-primary/25',
+  gemini: 'bg-info/12 text-info border-info/25',
+  custom: 'bg-muted text-muted-foreground border-border',
 };
 
 const knownPaths: Record<string, string> = {
@@ -109,11 +111,11 @@ export default function Providers() {
   ];
 
   const modelTypeOpts = [
-    { value: 'text', label: t('providers.textModel'), icon: Layers, color: 'bg-sky-500/10 text-sky-400 border-sky-500/20' },
-    { value: 'image', label: t('providers.imageModel'), icon: ImageIcon, color: 'bg-pink-500/10 text-pink-400 border-pink-500/20' },
-    { value: 'video', label: t('providers.videoModel'), icon: Video, color: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
-    { value: 'tts', label: t('providers.ttsModel'), icon: Mic, color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
-    { value: 'embedding', label: t('providers.embeddingModel'), icon: Box, color: 'bg-violet-500/10 text-violet-400 border-violet-500/20' },
+    { value: 'text', label: t('providers.textModel'), icon: Layers, color: 'bg-info/12 text-info border-info/25' },
+    { value: 'image', label: t('providers.imageModel'), icon: ImageIcon, color: 'bg-primary/12 text-primary border-primary/25' },
+    { value: 'video', label: t('providers.videoModel'), icon: Video, color: 'bg-warning/12 text-warning border-warning/25' },
+    { value: 'tts', label: t('providers.ttsModel'), icon: Mic, color: 'bg-success/12 text-success border-success/25' },
+    { value: 'embedding', label: t('providers.embeddingModel'), icon: Box, color: 'bg-muted text-muted-foreground border-border' },
   ];
 
   const [selectedProvider, setSelectedProvider] = useState<any>(null);
@@ -172,8 +174,19 @@ const [clearingModels, setClearingModels] = useState(false);
   const [onlineProtocolFilter, setOnlineProtocolFilter] = useState('all');
   const [onlineAuthFilter, setOnlineAuthFilter] = useState('all');
 
+  const [freeDialogOpen, setFreeDialogOpen] = useState(false);
+  const [freeChannels, setFreeChannels] = useState<any[]>([]);
+  const [freeUpdatedAt, setFreeUpdatedAt] = useState('');
+  const [freeLoading, setFreeLoading] = useState(false);
+  const [freeRefreshing, setFreeRefreshing] = useState(false);
+  const [freeExpanded, setFreeExpanded] = useState<Record<string, boolean>>({});
+  const [freeJoiningId, setFreeJoiningId] = useState('');
+  const [freeGatewayOpen, setFreeGatewayOpen] = useState('');
+  const [freeGatewayForm, setFreeGatewayForm] = useState<Record<string, { url: string; key: string }>>({});
+
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [confirmDeleteKeyId, setConfirmDeleteKeyId] = useState<number | null>(null);
+  const [confirmClearModels, setConfirmClearModels] = useState(false);
   // --- Queries ---
   const { data: providers = [] } = useQuery({
     queryKey: ['providers'],
@@ -607,7 +620,11 @@ const createModelMut = useMutation({
   const oauthProfileForSelected = (() => {
     const p: any = selectedProvider;
     if (!p) return null;
-    if (p.auth_type && p.auth_type !== 'api_key') return p.auth_type;
+    // auth_type 直通仅限：带浏览器授权流程的 CLI 平台（走 /api/oauth 的 CLI 桥接）
+    // 或已知 OAuth 档案；trae/opencode 等无浏览器流程的平台回落到手动填 Key
+    const cliBrowserPlatforms = ['cline', 'amazon-q', 'antigravity', 'workbuddy', 'workbuddy-intl', 'zcode'];
+    if (p.auth_type && p.auth_type !== 'api_key' &&
+        (cliBrowserPlatforms.includes(p.auth_type) || !!(oauthProfiles as any)?.[p.auth_type])) return p.auth_type;
     const base = (p.base_url || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     for (const [id, prof] of Object.entries(oauthProfiles as any)) {
@@ -645,8 +662,8 @@ const createModelMut = useMutation({
       }
       if ((res.data.flow || '').includes('device')) setCliBrowserCode(res.data.user_code || '');
       const sessionId = res.data.session_id;
-      // WorkBuddy 与官方插件一致：页面不回跳本地，靠轮询换取令牌（上游 1s 间隔）
-      const isPollingFlow = ['cli-aws-device', 'cli-workbuddy'].includes(res.data.flow || '');
+      // WorkBuddy/ZCode 与官方客户端一致：页面不回跳本地，靠轮询换取令牌
+      const isPollingFlow = ['cli-aws-device', 'cli-workbuddy', 'cli-zcode'].includes(res.data.flow || '');
       const pollInterval = res.data.flow === 'cli-workbuddy' ? 1500 : 2000;
       const startedAt = Date.now();
       const poll = async () => {
@@ -676,7 +693,7 @@ const createModelMut = useMutation({
   }
 
   const isWorkbuddyPlatform = cliPlatform === 'workbuddy' || cliPlatform === 'workbuddy-intl';
-  const cliBrowserSupported = ['cline', 'amazon-q', 'antigravity', 'workbuddy', 'workbuddy-intl'].includes(cliPlatform);
+  const cliBrowserSupported = ['cline', 'amazon-q', 'antigravity', 'workbuddy', 'workbuddy-intl', 'zcode'].includes(cliPlatform);
 
   // --- Local CLI credential import ---
   const [cliDialogOpen, setCliDialogOpen] = useState(false);
@@ -880,6 +897,54 @@ const createModelMut = useMutation({
     setOnlineDialogOpen(false);
   }
 
+  // --- Free model channels (OpenCode Zen / Kilo 免费池) ---
+  async function openFreeModels(force = false) {
+    setFreeDialogOpen(true);
+    if (force) setFreeRefreshing(true); else setFreeLoading(true);
+    try {
+      const res = await getFreeModels(force);
+      const channels: any[] = res.data?.channels || [];
+      setFreeChannels(channels);
+      // 需网关的渠道预填默认网关地址
+      setFreeGatewayForm(prev => {
+        const next = { ...prev };
+        channels.forEach((c: any) => {
+          if (c.requires_gateway && !next[c.id]) next[c.id] = { url: c.default_gateway_url || '', key: c.default_gateway_key || '' };
+        });
+        return next;
+      });
+      const at = channels.map((c: any) => c.updated_at).filter(Boolean).sort().pop() || '';
+      setFreeUpdatedAt(at);
+    } catch (_e) { toast({ title: t('providers.loadFailed'), variant: 'destructive' }); }
+    if (force) setFreeRefreshing(false); else setFreeLoading(false);
+  }
+
+  async function joinFree(ch: any, extra?: { gateway_base_url?: string; gateway_key?: string }) {
+    if (ch.requires_gateway && !extra) {
+      // 根目录 config.json 已配置网关时直接读取接入，不再弹手动输入框
+      if (ch.auto_gateway) {
+        await joinFree(ch, { gateway_base_url: ch.auto_gateway.url, gateway_key: ch.auto_gateway.key });
+        return;
+      }
+      setFreeGatewayOpen(freeGatewayOpen === ch.id ? '' : ch.id);
+      return;
+    }
+    setFreeJoiningId(ch.id);
+    try {
+      const res = await joinFreeChannel(ch.id, extra);
+      const d = res.data || {};
+      const list = await getProviders().then(r => r.data);
+      qc.invalidateQueries({ queryKey: ['providers'] });
+      const target = (list || []).find((p: any) => p.id === d.provider_id);
+      if (target) setSelectedProvider(target);
+      toast({ title: d.created ? t('providers.freeJoinDone') : t('providers.freeResynced'), description: `+${d.added_models ?? 0} ${t('providers.freeModelCount')}`, variant: 'success' });
+      setFreeGatewayOpen('');
+    } catch (e: any) {
+      toast({ title: t('providers.freeJoinFailed'), description: e?.response?.data?.detail, variant: 'destructive' });
+    }
+    setFreeJoiningId('');
+  }
+
   // Subsequence fuzzy match: "oi" hits "OpenAI", "ds" hits "DeepSeek"
   function fuzzyMatch(text: string, q: string): boolean {
     const t = text.toLowerCase();
@@ -902,23 +967,23 @@ const createModelMut = useMutation({
   });
 
   function getKeyStatusBadge(status: string) {
-    if (status === 'active') return <Badge className='bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs'>{t('providers.keyStatusActive')}</Badge>;
-    if (status === 'rate_limited') return <Badge className='bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs'>{t('providers.keyStatusRateLimited')}</Badge>;
-    if (status === 'inactive' || status === 'expired') return <Badge className='bg-red-500/10 text-red-400 border border-red-500/20 text-xs'>{t('providers.keyStatusInactive')}</Badge>;
-    return <Badge className='bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs'>{t('providers.keyStatusUntested')}</Badge>;
+    if (status === 'active') return <StatusBadge tone='success'>{t('providers.keyStatusActive')}</StatusBadge>;
+    if (status === 'rate_limited') return <StatusBadge tone='warning'>{t('providers.keyStatusRateLimited')}</StatusBadge>;
+    if (status === 'inactive' || status === 'expired') return <StatusBadge tone='destructive'>{t('providers.keyStatusInactive')}</StatusBadge>;
+    return <StatusBadge tone='neutral'>{t('providers.keyStatusUntested')}</StatusBadge>;
   }
 
   function getModelTypeBadge(type: string) {
     const mt = modelTypeOpts.find(m => m.value === type);
     if (!mt) return <Badge className='text-xs'>{type}</Badge>;
     const Icon = mt.icon;
-    return <Badge className={mt.color + ' text-xs border flex items-center gap-1'}><Icon className='w-3 h-3' />{mt.label}</Badge>;
+    return <Badge className={mt.color + ' text-xs border flex items-center gap-1'}><Icon className='w-3 h-3' aria-hidden='true' />{mt.label}</Badge>;
   }
 
   function getModelTestStatusBadge(status: string) {
-    if (status === 'active') return <Badge className='bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs'>{t('common.active')}</Badge>;
-    if (status === 'inactive') return <Badge className='bg-red-500/10 text-red-400 border border-red-500/20 text-xs'>{t('common.inactive')}</Badge>;
-    return <Badge className='bg-gray-500/10 text-gray-400 border border-gray-500/20 text-xs'>{t('providers.keyStatusUntested')}</Badge>;
+    if (status === 'active') return <StatusBadge tone='success'>{t('common.active')}</StatusBadge>;
+    if (status === 'inactive') return <StatusBadge tone='destructive'>{t('common.inactive')}</StatusBadge>;
+    return <StatusBadge tone='neutral'>{t('providers.keyStatusUntested')}</StatusBadge>;
   }
 
   const activeProviders = providers.filter((p: any) => p.is_active);
@@ -927,9 +992,9 @@ const createModelMut = useMutation({
 
   return (
     <>
-    <div className='flex h-[calc(100vh-4rem)] gap-4 p-4'>
+    <div className='flex h-[calc(100vh-3.5rem)] -m-6 lg:-m-8 gap-4 p-4 lg:p-6'>
       <div className='w-72 flex-shrink-0 flex flex-col gap-2'>
-        <h2 className='text-lg font-semibold mb-2'>{t('providers.title')}</h2>
+        <h2 className='text-lg font-semibold tracking-tight'>{t('providers.title')}</h2>
         <div className='flex gap-1 mb-2'>
           <Button variant='outline' size='sm' onClick={openOnlineProviders} title={t('providers.onlinePlatformsTitle')}>
             <Globe className='w-4 h-4 mr-1' />{t('providers.onlinePlatforms')}
@@ -941,6 +1006,9 @@ const createModelMut = useMutation({
           <Button variant='outline' size='sm' onClick={openCliImport} title={t('providers.localCliTitle')}>
             <Terminal className='w-4 h-4 mr-1' />{t('providers.localCli')}
           </Button>
+          <Button variant='outline' size='sm' onClick={() => openFreeModels()} title={t('providers.freeModelsTitle')}>
+            <Gift className='w-4 h-4 mr-1' />{t('providers.freeModels')}
+          </Button>
         </div>
         <div className='relative'>
           <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground' />
@@ -951,7 +1019,7 @@ const createModelMut = useMutation({
             <div className='text-center text-muted-foreground py-8'>{providerSearch ? t('providers.noProviders') : t('providers.noProviders')}</div>
           )}
           {filteredProviders.map((p: any) => (
-            <div key={p.id} className={`p-3 rounded-lg border cursor-pointer transition-all hover:border-primary/50 ${selectedProvider?.id === p.id ? 'border-primary bg-primary/5' : 'border-border'}`} onClick={() => setSelectedProvider(p)}>
+            <div key={p.id} className={`p-3 rounded-lg border cursor-pointer transition-all hover:border-primary/50 ${selectedProvider?.id === p.id ? 'border-primary/60 bg-primary/10' : 'border-border hover:bg-accent/40'}`} onClick={() => setSelectedProvider(p)}>
               <div className='flex items-center gap-2'>
                 {p.icon ? <img src={iconUrl(p.icon)} alt='' className='w-6 h-6 rounded' /> : <Server className='w-5 h-5 text-muted-foreground' />}
                 <span className='flex-1 font-medium text-sm truncate'>{p.name}</span>
@@ -1000,12 +1068,12 @@ const createModelMut = useMutation({
 
               <Separator className='my-3' />
               <div className='flex items-center justify-between mb-2 bg-muted/50 rounded-lg px-3 py-2'>
-                <h4 className='font-medium flex items-center gap-2'>
-                  <KeyRound className='w-4 h-4' />{t('providers.apiKeys')}
-                  <Badge variant='outline' className='ml-1 cursor-pointer bg-blue-500/10 text-blue-400 border-blue-500/20' onClick={openKeyPolicy} title={t('providers.keyPolicy')}>
+                <h4 className='flex-none whitespace-nowrap font-medium flex items-center gap-2'>
+                  <KeyRound className='w-4 h-4' aria-hidden='true' />{t('providers.apiKeys')}
+                  <Badge variant='outline' className='ml-1 cursor-pointer' onClick={openKeyPolicy} title={t('providers.keyPolicy')}>
                     Key: {keyPolicyOptions.find(o => o.value === (selectedProvider.key_strategy || 'round_robin'))?.label || selectedProvider.key_strategy}
                     {selectedProvider.key_switch_mode && selectedProvider.key_switch_mode !== 'none' && (
-                      <span className='ml-1 text-amber-400'>
+                      <span className='ml-1 text-warning'>
                         {selectedProvider.key_switch_mode === 'rpm_threshold' ? ' · RPM>' + (selectedProvider.key_rpm_threshold || 0) : ' · ' + (selectedProvider.key_count_threshold || 0) + t('strategies.countUnit')}
                       </span>
                     )}
@@ -1042,7 +1110,7 @@ const createModelMut = useMutation({
                       <TableCell>{getKeyStatusBadge(k.status)}</TableCell>
                       <TableCell className='text-xs text-muted-foreground max-w-[200px] truncate' title={k.last_error || ''}>
                         {k.last_error || '-'}
-                        {k.fail_count > 0 && <span className='ml-1 text-amber-400'>[{t('providers.authFailCount')}:{k.fail_count}]</span>}
+                        {k.fail_count > 0 && <span className='ml-1 text-warning'>[{t('providers.authFailCount')}:{k.fail_count}]</span>}
                       </TableCell>
                       <TableCell>
                         <div className='flex gap-1'>
@@ -1057,7 +1125,7 @@ const createModelMut = useMutation({
 
               <Separator className='my-3' />
               <div className='flex items-center justify-between mb-2 bg-muted/50 rounded-lg px-3 py-2'>
-                <h4 className='font-medium flex items-center gap-2'><Cpu className='w-4 h-4' />{t('providers.modelsTitle')}</h4>
+                <h4 className='flex-none whitespace-nowrap font-medium flex items-center gap-2'><Cpu className='w-4 h-4' aria-hidden='true' />{t('providers.modelsTitle')}</h4>
                 <div className='flex items-center gap-2'>
                   <div className='relative'>
                     <Search className='absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground' />
@@ -1065,7 +1133,7 @@ const createModelMut = useMutation({
                   </div>
                   <Button variant='outline' size='sm' onClick={() => testAllModelsMut.mutate()} disabled={testingAllModels}>{testingAllModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Zap className='w-3 h-3 mr-1' />}{t('providers.testAllModels')}</Button>
                   <Button variant='outline' size='sm' onClick={() => deleteInvalidModelsMut.mutate()} disabled={deletingInvalidModels}>{deletingInvalidModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash className='w-3 h-3 mr-1' />}{t('providers.deleteInvalidModels')}</Button>
-                  <Button variant='outline' size='sm' onClick={() => { if (window.confirm(t('providers.confirmClearModels'))) clearModelsMut.mutate(); }} disabled={clearingModels}>{clearingModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash2 className='w-3 h-3 mr-1' />}{t('providers.clearModels')}</Button>
+                  <Button variant='outline' size='sm' onClick={() => setConfirmClearModels(true)} disabled={clearingModels}>{clearingModels ? <Loader2 className='w-3 h-3 animate-spin mr-1' /> : <Trash2 className='w-3 h-3 mr-1' />}{t('providers.clearModels')}</Button>
                   <Button variant='outline' size='sm' onClick={async () => {
                   setSyncFetching(true);
                   try {
@@ -1209,7 +1277,7 @@ const createModelMut = useMutation({
               </SelectContent>
             </Select>
             {cliPlatforms.find((p: any) => p.id === cliPlatform)?.upstream?.pending && (
-              <p className='text-xs text-amber-500 mt-1'>{t('providers.cliPendingNote')}</p>
+              <p className='text-xs text-warning mt-1'>{t('providers.cliPendingNote')}</p>
             )}
           </div>
           {cliPlatform && cliBrowserSupported && (
@@ -1220,12 +1288,14 @@ const createModelMut = useMutation({
                   ? (isWorkbuddyPlatform ? t('providers.cliWorkbuddyWaiting') : t('providers.oauthWaiting'))
                   : (isWorkbuddyPlatform ? t('providers.cliWorkbuddyLoginBtn') : t('providers.cliBrowserBtn'))}
               </Button>
-              {isWorkbuddyPlatform && cliBrowserBusy && (
+              {(isWorkbuddyPlatform || cliPlatform === 'zcode') && cliBrowserBusy && (
                 <div className='text-xs text-muted-foreground space-y-1'>
-                  <p>{isWorkbuddyPlatform && cliPlatform === 'workbuddy-intl' ? 'workbuddy.ai' : 'workbuddy.cn'}</p>
+                  {isWorkbuddyPlatform && (
+                    <p>{cliPlatform === 'workbuddy-intl' ? 'workbuddy.ai' : 'workbuddy.cn'}</p>
+                  )}
                   {cliBrowserUrl && (
                     <a href={cliBrowserUrl} target='_blank' rel='noreferrer'
-                       className='text-cyan-600 hover:underline inline-flex items-center gap-1'>
+                       className='text-info hover:underline inline-flex items-center gap-1'>
                       <Globe className='h-3 w-3' />{t('providers.cliOpenLoginPageBtn')}
                     </a>
                   )}
@@ -1235,7 +1305,7 @@ const createModelMut = useMutation({
                 <div className='text-xs text-muted-foreground flex items-center justify-center gap-1.5 flex-wrap'>
                   {t('providers.oauthDeviceCode')}
                   <code className='font-mono text-sm font-bold text-foreground select-all tracking-wider'>{cliBrowserCode}</code>
-                  <button className='inline-flex items-center gap-0.5 text-[11px] text-cyan-600 hover:underline'
+                  <button className='inline-flex items-center gap-0.5 text-[11px] text-info hover:underline'
                           onClick={() => { navigator.clipboard.writeText(cliBrowserCode.trim().toUpperCase()); toast({ title: t('providers.oauthCopied'), variant: 'success' }); }}>
                     <Copy className='h-3 w-3' />{t('common.copy')}
                   </button>
@@ -1294,7 +1364,14 @@ const createModelMut = useMutation({
                            placeholder={cliPlatform === 'trae' ? t('providers.cliTokenPlaceholderTrae') : t('providers.cliTokenPlaceholderQ')}
                            className='font-mono text-xs' />
                   )}
-                  {cliPlatform !== 'trae' && cliPlatform !== 'opencode' && (
+                  {cliPlatform === 'zcode' && (
+                    <>
+                      <p className='text-xs text-muted-foreground'>{t('providers.cliZcodeNote')}</p>
+                      <Input type='password' value={cliPaste.token} onChange={e => setCliPaste(f => ({ ...f, token: e.target.value }))}
+                             placeholder={t('providers.cliTokenPlaceholderZcode')} className='font-mono text-xs' />
+                    </>
+                  )}
+                  {cliPlatform !== 'trae' && cliPlatform !== 'opencode' && cliPlatform !== 'zcode' && (
                     <Input value={cliPaste.refresh_token} onChange={e => setCliPaste(f => ({ ...f, refresh_token: e.target.value }))}
                            placeholder='refresh token' className='font-mono text-xs' />
                   )}
@@ -1338,7 +1415,7 @@ const createModelMut = useMutation({
                   {t('providers.oauthDeviceCode')}
                   <code className='font-mono text-sm font-bold text-foreground select-all tracking-wider'>{keyDeviceCode}</code>
                   <button
-                    className='inline-flex items-center gap-0.5 text-[11px] text-cyan-600 hover:underline'
+                    className='inline-flex items-center gap-0.5 text-[11px] text-info hover:underline'
                     onClick={() => { navigator.clipboard.writeText(keyDeviceCode.trim().toUpperCase()); toast({ title: t('providers.oauthCopied'), variant: 'success' }); }}
                   >
                     <Copy className='h-3 w-3' />{t('common.copy')}
@@ -1451,7 +1528,7 @@ const createModelMut = useMutation({
           <div><Label>{t('providers.contextWindow')}</Label>
             <div className='flex flex-wrap gap-1.5 mt-2'>
               {contextPresets.map(cp => (
-                <button key={cp.value} type='button' onClick={() => setModelForm(f => ({ ...f, context_window: cp.value }))} className={'px-2.5 py-1 rounded-md border text-xs transition-all ' + (Number(modelForm.context_window) === cp.value ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:border-primary/50')}>{cp.label}</button>
+                <button key={cp.value} type='button' onClick={() => setModelForm(f => ({ ...f, context_window: String(cp.value) }))} className={'px-2.5 py-1 rounded-md border text-xs transition-all ' + (Number(modelForm.context_window) === cp.value ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:border-primary/50')}>{cp.label}</button>
               ))}
               <Input type='number' value={modelForm.context_window} onChange={e => setModelForm(f => ({ ...f, context_window: e.target.value }))} className='w-24 h-8 text-xs' placeholder='Custom' />
             </div>
@@ -1532,6 +1609,124 @@ const createModelMut = useMutation({
     </Dialog>
 
     {/* Online Providers Dialog (list from models.dev, icons from lobe-icons) */}
+    {/* Free Models Collection Dialog */}
+    <Dialog open={freeDialogOpen} onOpenChange={setFreeDialogOpen}>
+      <DialogContent className='max-w-2xl max-h-[85vh] flex flex-col'>
+        <DialogHeader>
+          <DialogTitle className='flex items-center justify-between gap-2 pr-6'>
+            <span>{t('providers.freeModelsTitle')}</span>
+            <div className='flex items-center gap-2'>
+              {freeUpdatedAt && (
+                <span className='text-xs text-muted-foreground font-normal'>
+                  {t('providers.onlineUpdatedAt')}: {freeUpdatedAt.replace('T', ' ').slice(0, 19)}
+                </span>
+              )}
+              <Button variant='outline' size='sm' onClick={() => openFreeModels(true)} disabled={freeRefreshing || freeLoading}>
+                {freeRefreshing ? <Loader2 className='w-4 h-4 mr-1 animate-spin' /> : <RefreshCw className='w-4 h-4 mr-1' />}
+                {t('providers.freeRefresh')}
+              </Button>
+            </div>
+          </DialogTitle>
+          <p className='text-xs text-muted-foreground'>{t('providers.freeModelsSubtitle')}</p>
+        </DialogHeader>
+        {freeLoading ? (
+          <div className='text-center py-8 text-muted-foreground'><Loader2 className='w-6 h-6 animate-spin mx-auto mb-2' />{t('providers.loading')}</div>
+        ) : (
+          <div className='flex-1 overflow-y-auto space-y-2'>
+            {freeChannels.length === 0 && <p className='text-center text-muted-foreground py-4'>{t('providers.freeChannelEmpty')}</p>}
+            {freeChannels.map((ch: any) => {
+              const joined = providers.some((p: any) => p.name === ch.name);
+              const expanded = !!freeExpanded[ch.id];
+              return (
+                <div key={ch.id} className='rounded-lg border overflow-hidden'>
+                  <div className='p-3 flex items-center gap-3'>
+                    <div className='w-8 h-8 rounded bg-muted flex items-center justify-center flex-shrink-0'>
+                      {ch.icon ? <img src={ch.icon} alt='' className='w-6 h-6 rounded' onError={(e: any) => { e.currentTarget.style.visibility = 'hidden'; }} /> : <Server className='w-4 h-4 text-muted-foreground' />}
+                    </div>
+                    <div className='flex-1 min-w-0'>
+                      <div className='flex items-center gap-1.5 flex-wrap'>
+                        <p className='font-medium text-sm truncate'>{ch.name}</p>
+                        {ch.requires_gateway ? (
+                          <Badge variant='warning' className='text-[10px]'>{t('providers.freeNeedGateway')}</Badge>
+                        ) : (
+                          <Badge variant='success' className='text-[10px]'>{t('providers.freeNoKey')}</Badge>
+                        )}
+                        <Badge className={`${protocolColors[ch.protocol] || ''} text-[10px] border`}>{(ch.protocol || 'openai').toUpperCase()}</Badge>
+                      </div>
+                      <p className='text-xs text-muted-foreground truncate'>{ch.requires_gateway ? (freeGatewayForm[ch.id]?.url || ch.default_gateway_url || '') : ch.base_url}</p>
+                    </div>
+                    <button type='button' onClick={() => setFreeExpanded(prev => ({ ...prev, [ch.id]: !prev[ch.id] }))}
+                      className='text-xs text-muted-foreground hover:text-foreground whitespace-nowrap flex items-center gap-0.5'>
+                      {ch.models_count} {t('providers.freeModelCount')}
+                      <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+                    </button>
+                    {joined ? (
+                      <Badge variant='outline' className='text-[10px] whitespace-nowrap'>{t('providers.freeJoined')}</Badge>
+                    ) : (
+                      <Button size='sm' className='whitespace-nowrap' onClick={() => joinFree(ch)} disabled={freeJoiningId === ch.id}>
+                        {freeJoiningId === ch.id ? <Loader2 className='w-3 h-3 mr-1 animate-spin' /> : <Plus className='w-3 h-3 mr-1' />}
+                        {t('providers.freeJoin')}
+                      </Button>
+                    )}
+                  </div>
+                  {freeGatewayOpen === ch.id && !joined && ch.requires_gateway && (
+                    <div className='border-t bg-muted/30 p-3 space-y-2'>
+                      <p className='text-[11px] text-muted-foreground'>{t('providers.freeGatewayHint')}</p>
+                      <div className='flex gap-2 flex-wrap'>
+                        <Input
+                          value={freeGatewayForm[ch.id]?.url || ''}
+                          onChange={e => setFreeGatewayForm(prev => ({ ...prev, [ch.id]: { ...(prev[ch.id] || { key: '' }), url: e.target.value } }))}
+                          placeholder={ch.default_gateway_url || 'http://127.0.0.1:12005/v1'}
+                          className='h-8 text-xs flex-1 min-w-[200px]'
+                        />
+                        <Input
+                          value={freeGatewayForm[ch.id]?.key || ''}
+                          onChange={e => setFreeGatewayForm(prev => ({ ...prev, [ch.id]: { ...(prev[ch.id] || { url: '' }), key: e.target.value } }))}
+                          placeholder={ch.default_gateway_key || t('providers.freeGatewayKey')}
+                          className='h-8 text-xs w-44'
+                        />
+                        <Button size='sm' onClick={() => joinFree(ch, { gateway_base_url: (freeGatewayForm[ch.id]?.url || '').trim(), gateway_key: (freeGatewayForm[ch.id]?.key || '').trim() })}
+                          disabled={freeJoiningId === ch.id || !(freeGatewayForm[ch.id]?.url || '').trim()}>
+                          {freeJoiningId === ch.id ? <Loader2 className='w-3 h-3 mr-1 animate-spin' /> : <Plus className='w-3 h-3 mr-1' />}
+                          {t('providers.freeConfirmJoin')}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {expanded && (
+                    <div className='border-t bg-muted/30 max-h-56 overflow-y-auto'>
+                      {ch.notice && (
+                        <div className='px-3 py-1.5 text-[11px] text-warning flex items-start gap-1'>
+                          <AlertTriangle className='w-3 h-3 mt-0.5 flex-shrink-0' aria-hidden='true' />{ch.notice}
+                        </div>
+                      )}
+                      <div className='divide-y'>
+                        {(ch.models || []).map((m: any) => (
+                          <div key={m.model_id} className='px-3 py-1.5 flex items-center gap-2 text-xs'>
+                            <span className='font-medium truncate flex-1 min-w-0'>{m.display_name}</span>
+                            <span className='text-muted-foreground truncate max-w-[240px] hidden sm:inline'>{m.model_id}</span>
+                            {m.supports_reasoning && <Badge variant='info' className='text-[10px]'>Reasoning</Badge>}
+                            {m.supports_tools && <Badge variant='secondary' className='text-[10px]'>Tools</Badge>}
+                            {m.is_multimodal && <Badge variant='default' className='text-[10px]'>Vision</Badge>}
+                            <Badge variant='outline' className='text-[10px] whitespace-nowrap'>
+                              {m.context_window
+                                ? (m.context_window >= 1000000 ? (m.context_window / 1000000).toFixed(0).replace('.0', '') + 'M'
+                                    : m.context_window >= 1000 ? Math.round(m.context_window / 1000) + 'K' : m.context_window)
+                                : '—'}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+
     <Dialog open={onlineDialogOpen} onOpenChange={setOnlineDialogOpen}>
       <DialogContent className='max-w-2xl max-h-[80vh] flex flex-col'>
         <DialogHeader>
@@ -1590,7 +1785,7 @@ const createModelMut = useMutation({
                     <p className='text-xs text-muted-foreground truncate'>{p.base_url}</p>
                   </div>
                   <Badge variant='outline' className='text-[10px] whitespace-nowrap'>{p.models_count} {t('providers.modelsCount')}</Badge>
-                  {p.auth_type === 'oauth' && <Badge className='bg-emerald-500/10 text-emerald-500 border-emerald-500/30 text-[10px]'>OAuth</Badge>}
+                  {p.auth_type === 'oauth' && <Badge variant='success' className='text-[10px]'>OAuth</Badge>}
                   <Badge className={`${protocolColors[p.protocol] || ''} text-[10px] border`}>{p.protocol?.toUpperCase()}</Badge>
                   <ChevronRight className='w-4 h-4 text-muted-foreground' />
                 </button>
@@ -1624,6 +1819,18 @@ const createModelMut = useMutation({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Confirm Clear Models */}
+    <ConfirmDialog
+      open={confirmClearModels}
+      onOpenChange={setConfirmClearModels}
+      title={t('providers.clearModels')}
+      description={t('providers.confirmClearModels')}
+      confirmLabel={t('common.confirm')}
+      cancelLabel={t('providers.cancel')}
+      loading={clearingModels}
+      onConfirm={() => { clearModelsMut.mutate(); setConfirmClearModels(false); }}
+    />
 
     {/* Sync Models Dialog */}
     <Dialog open={syncDialogOpen} onOpenChange={v => { if (!v) { setSyncDialogOpen(false); setFetchedModels([]); setSelectedSyncIds(new Set()); setSyncModelSearch(''); setSyncFreeOnly(false); } }}>

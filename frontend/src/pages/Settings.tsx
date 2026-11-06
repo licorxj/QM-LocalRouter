@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { useI18n, LOCALES } from "../i18n";
+import { useTheme } from "../providers/theme";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getBackupConfig, updateBackupConfig, createBackup,
   listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl, getRepositoryStatus, updateRepository,
 } from "../services/api";
 import { toast } from "../stores/toast";
+import { cn } from "../lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -13,10 +15,42 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
-import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, Github, GitPullRequest, CheckCircle2 } from "lucide-react";
+import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, MonitorCog, Github, GitPullRequest, CheckCircle2 } from "lucide-react";
+
+/** Compact segmented control for mutually-exclusive small choices. */
+function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: React.ReactNode; icon?: React.ReactNode }[];
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border bg-muted/60 p-0.5" role="radiogroup" aria-label={ariaLabel}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+            value === o.value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {o.icon}
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { t, locale, setLocale } = useI18n();
-  const [dark, setDark] = useState(document.documentElement.classList.contains("dark"));
+  const { theme, setTheme } = useTheme();
   const [backing, setBacking] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null);
@@ -29,13 +63,6 @@ export default function SettingsPage() {
     // git fetch/compare/update logic via /api/settings/repository).
     getRepositoryStatus().then(r => setRepositoryStatus(r.data)).catch(() => {});
   }, []);
-
-  const toggleTheme = () => {
-    const next = !dark;
-    setDark(next);
-    if (next) { document.documentElement.classList.add("dark"); }
-    else { document.documentElement.classList.remove("dark"); }
-  };
 
   const checkForUpdates = async () => {
     setCheckingUpdate(true);
@@ -158,32 +185,36 @@ export default function SettingsPage() {
       {/* Appearance */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><Palette className="h-4 w-4 text-cyan-400" /><CardTitle className="text-base">{t("settings.appearance")}</CardTitle></div>
+          <div className="flex items-center gap-2"><Palette className="h-4 w-4 text-primary" aria-hidden="true" /><CardTitle className="text-base">{t("settings.appearance")}</CardTitle></div>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div>
               <Label className="text-sm font-medium">{t("settings.themeMode")}</Label>
               <p className="text-xs text-muted-foreground mt-0.5">{t("settings.themeDesc")}</p>
             </div>
-            <button onClick={toggleTheme} className="relative inline-flex h-8 w-14 items-center rounded-full transition-colors" style={{ background: dark ? "#0ea5e9" : "#e2e8f0" }}>
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-white transition-transform" style={{ transform: dark ? "translateX(30px)" : "translateX(2px)" }}>
-                {dark ? <Moon className="h-3.5 w-3.5 text-sky-600" /> : <Sun className="h-3.5 w-3.5 text-amber-500" />}
-              </span>
-            </button>
+            <Segmented
+              ariaLabel={t("common.theme")}
+              value={theme}
+              onChange={setTheme}
+              options={[
+                { value: "light", label: t("common.themeLight"), icon: <Sun className="h-3.5 w-3.5" aria-hidden="true" /> },
+                { value: "dark", label: t("common.themeDark"), icon: <Moon className="h-3.5 w-3.5" aria-hidden="true" /> },
+                { value: "system", label: t("common.themeSystem"), icon: <MonitorCog className="h-3.5 w-3.5" aria-hidden="true" /> },
+              ]}
+            />
           </div>
-          <div className="flex items-center justify-between mt-4 pt-4 border-t">
+          <div className="flex items-center justify-between mt-4 pt-4 border-t gap-3">
             <div>
               <Label className="text-sm font-medium">{t("settings.language")}</Label>
               <p className="text-xs text-muted-foreground mt-0.5">{t("settings.languageDesc")}</p>
             </div>
-            <div className="flex gap-2">
-              {LOCALES.map((l) => (
-                <Button key={l.value} variant={locale === l.value ? "default" : "outline"} size="sm" className={locale === l.value ? "bg-cyan-600 hover:bg-cyan-700" : ""} onClick={() => setLocale(l.value)}>
-                  {l.label}
-                </Button>
-              ))}
-            </div>
+            <Segmented
+              ariaLabel={t("common.language")}
+              value={locale}
+              onChange={setLocale}
+              options={LOCALES.map((l) => ({ value: l.value, label: l.label }))}
+            />
           </div>
 
         </CardContent>
@@ -212,7 +243,7 @@ export default function SettingsPage() {
                     : t("settings.upToDateDesc")
                   : t("settings.versionUpdatesDesc")}
               </p>
-              {repositoryStatus && !repositoryStatus.working_tree_clean && <p className="text-xs text-amber-500 mt-1">{t("settings.localChangesWarning")}</p>}
+              {repositoryStatus && !repositoryStatus.working_tree_clean && <p className="text-xs text-warning mt-1">{t("settings.localChangesWarning")}</p>}
             </div>
             <div className="flex gap-2 shrink-0">
               <Button variant="outline" size="sm" className="gap-1.5" onClick={checkForUpdates} disabled={checkingUpdate || updatingRepository}>
@@ -225,7 +256,7 @@ export default function SettingsPage() {
                   {t("settings.installUpdate")}
                 </Button>
               )}
-              {repositoryStatus && !repositoryStatus.update_available && <CheckCircle2 className="h-5 w-5 self-center text-emerald-500" aria-label={t("settings.upToDate")} />}
+              {repositoryStatus && !repositoryStatus.update_available && <CheckCircle2 className="h-5 w-5 self-center text-success" aria-label={t("settings.upToDate")} />}
             </div>
           </div>
         </CardContent>
@@ -233,7 +264,7 @@ export default function SettingsPage() {
       {/* Backup and Restore */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><Database className="h-4 w-4 text-blue-400" /><CardTitle className="text-base">{t("settings.backupRestore")}</CardTitle></div>
+          <div className="flex items-center gap-2"><Database className="h-4 w-4 text-info" aria-hidden="true" /><CardTitle className="text-base">{t("settings.backupRestore")}</CardTitle></div>
         </CardHeader>
         <CardContent className="space-y-5">
 

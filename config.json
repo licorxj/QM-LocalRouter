@@ -1,0 +1,77 @@
+{
+  "rotation": {
+    "sota": {
+      "alias": "sota",
+      "order": [
+        "deepseek-v4.1-flash",
+        "glm-5.3",
+        "grok-4.6",
+        "kimi-k3",
+        "qwen3.8-max"
+      ]
+    },
+    "sweet": {
+      "alias": "sweet",
+      "order": []
+    },
+    "first_output_seconds": 30
+  },
+  "listen": "127.0.0.1:12005",
+  "server_keys": [
+    "admin"
+  ],
+  "zen_keys": ["sk-Uw4xkp4Xh5ECrpxKda3HCoPokdD3uaLURiznmf1NFHCb6Py8bt8pzdCQCixpxAe0"],
+  "go_keys": [],
+  "anonymous": true,
+  "warp": {
+    "enabled": false,
+    "pool_size": 2,
+    "stack": "ipv6"
+  },
+  "proxies": [
+    "direct"
+  ],
+  "proxyfile": "",
+  "upstream": {
+    "zen": "https://opencode.ai/zen",
+    "go": "https://opencode.ai/zen/go",
+    "anonymous": "https://opencode.ai/inference"
+  },
+  "retry": {
+    "max_attempts": 3,
+    "timeout_seconds": 300
+  },
+  "models": {
+    "refresh_seconds": 300,
+    "protocols": {},
+    "free_only": false
+  },
+  "performance": {
+    "max_idle_conns": 2048,
+    "max_idle_conns_per_host": 256,
+    "max_conns_per_host": 0,
+    "idle_conn_timeout_seconds": 120,
+    "connect_timeout_seconds": 5,
+    "failure_cooldown_seconds": 15,
+    "attempt_timeout_seconds": 0,
+    "first_event_timeout_seconds": 0,
+    "max_anonymous_exits": 8,
+    "free_tier_block_seconds": 900
+  },
+  "logging": {
+    "level": "info",
+    "ring_size": 2000,
+    "dump_request_bodies": false
+  },
+  "webui": {
+    "enabled": true,
+    "listen": "0.0.0.0:8081",
+    "username": "admin",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=2$aHh81YmdYgm+g5NWypGSew$MJCq6F7gfreLAp6Ky6N/uRH9PsASgwjFJx51mKiAkcI",
+    "session_ttl_minutes": 720
+  },
+  "prefer": "go",
+  "reasoning": {
+    "effort": "high"
+  }
+}

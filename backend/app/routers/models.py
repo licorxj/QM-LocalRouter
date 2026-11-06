@@ -126,6 +126,32 @@ async def _cline_catalog(provider: Provider, key_obj: ApiKey):
         })
     return out
 
+async def _zcode_catalog(provider: Provider, key_obj: ApiKey):
+    """ZCode（zcode.z.ai）没有 OpenAI /models 端点，模型目录为静态清单。
+
+    返回 FetchModelItem 字典列表；非 zcode 平台返回 None（回退到常规逻辑）。
+    """
+    if str(provider.auth_type or "") != "zcode":
+        return None
+    from app.services import zcode as zcode_svc
+
+    out = []
+    for item in zcode_svc.DEFAULT_MODELS:
+        model_id = item["model_id"]
+        known = get_known_model_params(model_id) or {}
+        out.append({
+            "model_id": model_id,
+            "display_name": known.get("display_name") or item.get("display_name") or model_id,
+            "is_multimodal": known.get("is_multimodal", bool(item.get("is_multimodal"))),
+            "model_type": known.get("model_type", "text"),
+            "context_window": known.get("context_window") or item.get("context_window"),
+            "temperature": known.get("temperature"),
+            "price_input": known.get("price_input"),
+            "price_output": known.get("price_output"),
+            "already_added": False,
+        })
+    return out
+
 router = APIRouter(prefix="/api", tags=["models"])
 
 
@@ -227,6 +253,8 @@ async def fetch_models(provider_id: int, db: AsyncSession = Depends(get_db)):
         wb_items = await _opencode_catalog(provider, key_obj)
     if wb_items is None:
         wb_items = await _cline_catalog(provider, key_obj)
+    if wb_items is None:
+        wb_items = await _zcode_catalog(provider, key_obj)
     if wb_items is not None:
         existing_result = await db.execute(select(Model).where(Model.provider_id == provider_id))
         existing_ids = {m.model_id for m in existing_result.scalars().all()}
@@ -239,7 +267,8 @@ async def fetch_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     try:
         if provider.protocol in ("openai", "custom"):
             headers = {"Content-Type": "application/json"}
-            if key_obj:
+            # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
+            if key_obj and str(provider.auth_type or "") != "none":
                 headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(f"{provider.base_url.rstrip('/')}/models", headers=headers)
@@ -332,7 +361,8 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
 
             headers = {"Content-Type": "application/json"}
 
-            if key_obj:
+            # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
+            if key_obj and str(provider.auth_type or "") != "none":
 
                 headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
 
@@ -454,6 +484,8 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
         wb_items = await _opencode_catalog(provider, key_obj)
     if wb_items is None:
         wb_items = await _cline_catalog(provider, key_obj)
+    if wb_items is None:
+        wb_items = await _zcode_catalog(provider, key_obj)
     if wb_items is not None:
         models_data = wb_items
 
@@ -611,7 +643,8 @@ async def test_all_models(provider_id: int, db: AsyncSession = Depends(get_db)):
             try:
                 if provider.protocol in ("openai", "custom"):
                     headers = {"Content-Type": "application/json"}
-                    if key_obj:
+                    # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
+                    if key_obj and str(provider.auth_type or "") != "none":
                         headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
                     payload = {
                         "model": model.model_id,

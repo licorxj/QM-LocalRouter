@@ -12,7 +12,7 @@ const locales: Record<Locale, typeof zhCN> = {
 interface I18nContextType {
   locale: Locale;
   setLocale: (locale: Locale) => void;
-  t: (key: string) => string;
+  t: (key: string, vars?: Record<string, string | number>) => string;
 }
 
 const I18nContext = createContext<I18nContextType>({
@@ -41,8 +41,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     } catch {}
   };
 
-  const t = (key: string): string => {
-    return getNestedValue(locales[locale], key);
+  const t = (key: string, vars?: Record<string, string | number>): string => {
+    const raw = getNestedValue(locales[locale], key);
+    if (!vars) return raw;
+    // Interpolate `{{name}}` placeholders; unknown vars render as empty.
+    return raw.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, name) =>
+      vars[name] !== undefined ? String(vars[name]) : ""
+    );
   };
 
   return (

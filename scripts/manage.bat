@@ -7,7 +7,7 @@ set "PROJECT_ROOT=%~dp0.."
 set "RUN_DIR=%PROJECT_ROOT%\run"
 set "BACKEND_DIR=%PROJECT_ROOT%\backend"
 set "FRONTEND_DIR=%PROJECT_ROOT%\frontend"
-:: --- Load ports from root .env (if present) for parity with Linux start.sh ---
+REM --- Load ports from root .env (if present) for parity with Linux start.sh ---
 if exist "%PROJECT_ROOT%\.env" (
     for /f "usebackq tokens=1,* delims==" %%a in (`findstr /B /C:"BACKEND_PORT=" /C:"FRONTEND_PORT=" /C:"MANAGER_PORT=" "%PROJECT_ROOT%\.env"`) do (
         if not defined %%a set "%%a=%%b"
@@ -27,7 +27,7 @@ set "MANAGER_PIDFILE=%RUN_DIR%\manager.pid"
 
 if not exist "%RUN_DIR%" mkdir "%RUN_DIR%"
 
-:: Find venv Python
+REM Find venv Python
 set "PYTHON="
 if exist "%BACKEND_DIR%\venv\Scripts\python.exe" (
     set "PYTHON=%BACKEND_DIR%\venv\Scripts\python.exe"
@@ -40,9 +40,9 @@ if exist "%BACKEND_DIR%\venv\Scripts\python.exe" (
 
 goto :main
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :is_running <pidfile>
-::------------------------------------------------------
+REM ------------------------------------------------------
 setlocal
 set "pid_file=%~1"
 if not exist "%pid_file%" exit /b 1
@@ -51,27 +51,23 @@ if "%pid%"=="" exit /b 1
 tasklist /FI "PID eq %pid%" 2>nul | findstr /C:"%pid%" >nul
 exit /b %ERRORLEVEL%
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :write_pid <pidfile>
-::------------------------------------------------------
+REM ------------------------------------------------------
 echo %2 > %1
 exit /b 0
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :cleanup_pid <pidfile>
-::------------------------------------------------------
+REM ------------------------------------------------------
 if exist "%~1" del /f "%~1"
 exit /b 0
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :backend_start
-::------------------------------------------------------
+REM ------------------------------------------------------
 call :is_running "%BACKEND_PIDFILE%"
-if !ERRORLEVEL! EQU 0 (
-    set /p pid=<"%BACKEND_PIDFILE%"
-    echo Backend is already running (PID: !pid!)
-    exit /b 0
-)
+if !ERRORLEVEL! EQU 0 goto backend_already_running
 echo Starting Backend (uvicorn) on port %BACKEND_PORT%...
 for /f %%i in ('powershell -NoProfile -Command "(Start-Process -FilePath '%PYTHON%' -ArgumentList '-m','uvicorn','app.main:app','--host','0.0.0.0','--port','%BACKEND_PORT%' -WorkingDirectory '%BACKEND_DIR%' -WindowStyle Minimized -PassThru).Id"') do set "NEWPID=%%i"
 if not defined NEWPID (
@@ -82,9 +78,14 @@ call :write_pid "%BACKEND_PIDFILE%" !NEWPID!
 echo   Backend started (PID: !NEWPID!)
 exit /b 0
 
-::------------------------------------------------------
+:backend_already_running
+set /p pid=<"%BACKEND_PIDFILE%"
+echo Backend is already running, PID: !pid!
+exit /b 0
+
+REM ------------------------------------------------------
 :backend_stop
-::------------------------------------------------------
+REM ------------------------------------------------------
 call :is_running "%BACKEND_PIDFILE%"
 if !ERRORLEVEL! NEQ 0 (
     echo Backend is not running
@@ -98,9 +99,9 @@ call :cleanup_pid "%BACKEND_PIDFILE%"
 echo   Backend stopped
 exit /b 0
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :frontend_start
-::------------------------------------------------------
+REM ------------------------------------------------------
 cd "%FRONTEND_DIR%"
 if not exist "%FRONTEND_DIR%\node_modules" (
     echo Installing frontend dependencies...
@@ -109,13 +110,9 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 cd "%PROJECT_ROOT%"
 
 call :is_running "%FRONTEND_PIDFILE%"
-if !ERRORLEVEL! EQU 0 (
-    set /p pid=<"%FRONTEND_PIDFILE%"
-    echo Frontend is already running (PID: !pid!)
-    exit /b 0
-)
+if !ERRORLEVEL! EQU 0 goto frontend_already_running
 echo Starting Frontend (Vite) on port %FRONTEND_PORT%...
-for /f %%i in ('powershell -NoProfile -Command "$env:FRONTEND_PORT='%FRONTEND_PORT%'; (Start-Process -FilePath 'npm' -ArgumentList 'run','dev' -WorkingDirectory '%FRONTEND_DIR%' -WindowStyle Minimized -PassThru).Id"') do set "NEWPID=%%i"
+for /f %%i in ('powershell -NoProfile -Command "$env:FRONTEND_PORT='%FRONTEND_PORT%'; (Start-Process -FilePath 'npm.cmd' -ArgumentList 'run','dev' -WorkingDirectory '%FRONTEND_DIR%' -WindowStyle Minimized -PassThru).Id"') do set "NEWPID=%%i"
 if not defined NEWPID (
     echo   [ERROR] Failed to start Frontend.
     exit /b 1
@@ -124,9 +121,14 @@ call :write_pid "%FRONTEND_PIDFILE%" !NEWPID!
 echo   Frontend started (PID: !NEWPID!)
 exit /b 0
 
-::------------------------------------------------------
+:frontend_already_running
+set /p pid=<"%FRONTEND_PIDFILE%"
+echo Frontend is already running, PID: !pid!
+exit /b 0
+
+REM ------------------------------------------------------
 :frontend_stop
-::------------------------------------------------------
+REM ------------------------------------------------------
 call :is_running "%FRONTEND_PIDFILE%"
 if !ERRORLEVEL! NEQ 0 (
     echo Frontend is not running
@@ -140,15 +142,11 @@ call :cleanup_pid "%FRONTEND_PIDFILE%"
 echo   Frontend stopped
 exit /b 0
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :manager_start
-::------------------------------------------------------
+REM ------------------------------------------------------
 call :is_running "%MANAGER_PIDFILE%"
-if !ERRORLEVEL! EQU 0 (
-    set /p pid=<"%MANAGER_PIDFILE%"
-    echo Service Manager is already running (PID: !pid!)
-    exit /b 0
-)
+if !ERRORLEVEL! EQU 0 goto manager_already_running
 if "%PYTHON%"=="" (
     echo ERROR: Python not found
     exit /b 1
@@ -163,9 +161,14 @@ call :write_pid "%MANAGER_PIDFILE%" !NEWPID!
 echo   Service Manager started (PID: !NEWPID!)
 exit /b 0
 
-::------------------------------------------------------
+:manager_already_running
+set /p pid=<"%MANAGER_PIDFILE%"
+echo Service Manager is already running, PID: !pid!
+exit /b 0
+
+REM ------------------------------------------------------
 :manager_stop
-::------------------------------------------------------
+REM ------------------------------------------------------
 call :is_running "%MANAGER_PIDFILE%"
 if !ERRORLEVEL! NEQ 0 (
     echo Service Manager is not running
@@ -179,9 +182,9 @@ call :cleanup_pid "%MANAGER_PIDFILE%"
 echo   Service Manager stopped
 exit /b 0
 
-::------------------------------------------------------
+REM ------------------------------------------------------
 :main
-::------------------------------------------------------
+REM ------------------------------------------------------
 if "%1"=="" goto help
 
 if /I "%1"=="start" (

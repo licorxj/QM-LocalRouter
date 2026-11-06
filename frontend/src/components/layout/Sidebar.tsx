@@ -1,201 +1,196 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useI18n } from "../../i18n";
-import {
-  LayoutDashboard, Server, GitBranch, ScrollText, Settings, MessageSquare,
-  Play, Loader2, Network, Route,
-} from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { getVersion } from "../../services/api";
+import { useShell } from "../../stores/shell";
+import { useNavItems } from "./nav";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "@/lib/utils";
 
-function useNavItems() {
-  const { t } = useI18n();
-  return [
-    { to: "/", icon: LayoutDashboard, label: t("sidebar.dashboard") },
-    { to: "/chat", icon: MessageSquare, label: t("sidebar.chat") },
-    { to: "/providers", icon: Server, label: t("sidebar.providers") },
-    { to: "/strategies", icon: GitBranch, label: t("sidebar.strategies") },
-    { to: "/logs", icon: ScrollText, label: t("sidebar.logs") },
-    { to: "/endpoints", icon: Network, label: t("sidebar.endpoints") },
-    { to: "/forwarding", icon: Route, label: t("sidebar.forwarding") },
-    { to: "/settings", icon: Settings, label: t("sidebar.settings") },
-  ];
-}
-
-export default function Sidebar() {
-  const navItems = useNavItems();
-  const { t } = useI18n();
-  const [serviceRunning, setServiceRunning] = useState<boolean | null>(null);
-  const [checking, setChecking] = useState(true);
-  const [starting, setStarting] = useState(false);
-  const [showDialog, setShowDialog] = useState(false);
+function VersionFooter() {
   const [versionInfo, setVersionInfo] = useState<any>(null);
-
-  const checkHealth = useCallback(async () => {
-    try {
-      const res = await fetch("/api/health", { method: "GET", signal: AbortSignal.timeout(3000) });
-      setServiceRunning(res.ok);
-    } catch {
-      setServiceRunning(false);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    checkHealth();
-    const interval = setInterval(checkHealth, 8000);
-    return () => clearInterval(interval);
-  }, [checkHealth]);
 
   useEffect(() => {
     getVersion().then((r) => setVersionInfo(r.data)).catch(() => {});
   }, []);
 
-  const MANAGER_PORT = 12003;
+  return (
+    <div className="flex items-center gap-1.5 font-mono text-[11px] tracking-wider text-muted-foreground/70">
+      {versionInfo ? (
+        <>
+          <span>v{versionInfo.version}</span>
+          {versionInfo.git_commit && (
+            <span className="opacity-70">#{String(versionInfo.git_commit).slice(0, 7)}</span>
+          )}
+          {versionInfo.build_type === "release" && (
+            <span className="rounded bg-primary/12 px-1 text-primary">rel</span>
+          )}
+        </>
+      ) : (
+        <span>v1.0.0</span>
+      )}
+    </div>
+  );
+}
 
-  const handleStartService = async () => {
-    setStarting(true);
-    // Try the standalone service manager first (always running alongside frontend)
-    try {
-      const mgrRes = await fetch(`http://127.0.0.1:${MANAGER_PORT}/start`, {
-        method: "POST",
-        signal: AbortSignal.timeout(8000),
-      });
-      if (mgrRes.ok) {
-        // Wait for backend to come up
-        let retries = 0;
-        const poll = async () => {
-          retries++;
-          try {
-            const hr = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
-            if (hr.ok) { setServiceRunning(true); setStarting(false); return; }
-          } catch {}
-          if (retries < 10) setTimeout(poll, 1000);
-          else setStarting(false);
-        };
-        setTimeout(poll, 1500);
-        return;
-      }
-    } catch {
-      // Service manager not reachable, try backend directly
-    }
-    // Fallback: try backend's own start endpoint
-    try {
-      const res = await fetch("/api/service/start", { method: "POST", signal: AbortSignal.timeout(5000) });
-      if (res.ok) {
-        setTimeout(async () => { await checkHealth(); setStarting(false); }, 3000);
-        return;
-      }
-    } catch {}
-    setStarting(false);
-    setShowDialog(true);
-  };
+type SidebarContentProps = {
+  collapsed: boolean;
+  /** Mobile drawers close after navigation; desktop ignores this. */
+  onNavigate?: () => void;
+};
+
+function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
+  const { t } = useI18n();
+  const navItems = useNavItems();
+  const { toggleCollapsed } = useShell();
 
   return (
-    <aside className="fixed left-0 top-0 z-40 h-screen w-60 sidebar-gradient flex flex-col">
+    <>
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 px-5 border-b border-border">
-        <img src="/logo.png" alt="LocalRouter Logo" className="h-9 w-9 rounded-xl object-cover shadow-lg" />
-        <div>
-          <h1 className="text-base font-extrabold tracking-tight text-foreground">LocalRouter</h1>
-          <p className="text-[9px] font-semibold tracking-[0.15em] text-cyan-700 dark:text-cyan-300 font-bold">{t("sidebar.tagline")}</p>
-        </div>
+      <div
+        className={cn(
+          "flex h-14 flex-none items-center gap-2.5 border-b border-border px-4",
+          collapsed && "justify-center px-0"
+        )}
+      >
+        <img
+          src="/logo.png"
+          alt="LocalRouter"
+          className="h-8 w-8 flex-none object-contain"
+        />
+        {!collapsed && (
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-bold tracking-tight text-foreground">
+              LocalRouter
+            </h1>
+            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-primary/80">
+              {t("sidebar.tagline")}
+            </p>
+          </div>
+        )}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label={t("sidebar.collapse")}
+            title={t("sidebar.collapse")}
+            className="ml-auto hidden rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground md:block"
+          >
+            <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-3 space-y-0.5 overflow-y-auto">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-200 " +
-              (isActive
-                ? "bg-primary/10 text-primary font-bold"
-                : "text-foreground/70 hover:bg-black/[0.05] dark:hover:bg-white/[0.06] hover:text-foreground font-medium")
-            }
-          >
-            {({ isActive }) => (
-              <>
-                {isActive && (
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-cyan-400 shadow-[0_0_8px_2px_hsla(199,89%,48%,0.35)]" />
-                )}
-                <div className={"flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 " + (isActive ? "bg-cyan-500/10" : "group-hover:bg-black/[0.04] dark:group-hover:bg-white/[0.04]")}>
-                  <item.icon className={"h-4 w-4 transition-colors " + (isActive ? "text-cyan-400" : "text-muted-foreground group-hover:text-foreground")} strokeWidth={isActive ? 2.5 : 2} />
-                </div>
-                <span>{item.label}</span>
-                {isActive && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_2px_hsla(199,89%,48%,0.4)] pulse-dot" />}
-              </>
-            )}
-          </NavLink>
-        ))}
+      <nav className={cn("flex-1 space-y-0.5 overflow-y-auto py-3", collapsed ? "px-2" : "px-3")}>
+        {navItems.map((item) => {
+          const link = (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === "/"}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  "group relative flex items-center rounded-lg text-sm transition-colors",
+                  collapsed ? "h-10 justify-center px-0" : "gap-3 px-3 py-2 font-medium",
+                  isActive
+                    ? "bg-primary/10 font-semibold text-primary"
+                    : "text-sidebar-foreground hover:bg-foreground/5 hover:text-foreground"
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "absolute top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary",
+                        collapsed ? "left-0" : "-left-3"
+                      )}
+                    />
+                  )}
+                  <item.icon
+                    className={cn("h-4 w-4 flex-none", !isActive && "text-muted-foreground group-hover:text-foreground")}
+                    strokeWidth={isActive ? 2.4 : 2}
+                    aria-hidden="true"
+                  />
+                  {!collapsed && <span className="truncate">{item.label}</span>}
+                </>
+              )}
+            </NavLink>
+          );
+
+          return collapsed ? (
+            <Tooltip key={item.to}>
+              <TooltipTrigger asChild>{link}</TooltipTrigger>
+              <TooltipContent side="right">{item.label}</TooltipContent>
+            </Tooltip>
+          ) : (
+            link
+          );
+        })}
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-border p-4">
-        {checking ? (
-          <div className="flex items-center gap-2.5">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">{t("common.loading")}</span>
-          </div>
-        ) : serviceRunning ? (
-          <div className="flex items-center gap-2.5">
-            <div className="status-led status-led-green" />
-            <span className="text-sm font-medium text-foreground/80">{t("sidebar.serviceRunning")}</span>
-          </div>
-        ) : (
-          <button
-            onClick={handleStartService}
-            disabled={starting}
-            className="flex items-center gap-2.5 w-full group cursor-pointer disabled:opacity-60"
-          >
-            <div className="h-3 w-3 rounded-full bg-red-400/80 shadow-[0_0_6px_2px_rgba(248,113,113,0.3)]" />
-            {starting ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
-                <span className="text-sm font-medium text-amber-500">{t("sidebar.starting")}</span>
-              </>
-            ) : (
-              <>
-                <span className="text-sm font-medium text-red-500 dark:text-red-400 group-hover:underline">{t("sidebar.serviceStopped")}</span>
-                <Play className="h-3.5 w-3.5 ml-auto text-red-500 dark:text-red-400" />
-              </>
-            )}
-          </button>
+      <div
+        className={cn(
+          "flex flex-none items-center gap-2 border-t border-border px-4 py-3",
+          collapsed && "justify-center px-0"
         )}
-        <div className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground/50 tracking-wider">
-          {versionInfo ? (
-            <>
-              <span>v{versionInfo.version}</span>
-              {versionInfo.git_commit && (
-                <span className="opacity-70">#{String(versionInfo.git_commit).slice(0, 7)}</span>
-              )}
-              {versionInfo.build_type === "release" && (
-                <span className="rounded bg-cyan-500/10 px-1 text-cyan-500">rel</span>
-              )}
-            </>
-          ) : (
-            <span>v1.0.0</span>
+      >
+        {!collapsed && <VersionFooter />}
+        <button
+          type="button"
+          onClick={() => (collapsed ? toggleCollapsed() : useShell.getState().setMobileOpen(false))}
+          aria-label={collapsed ? t("sidebar.expand") : t("sidebar.closeMenu")}
+          className={cn(
+            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+            collapsed ? "md:block" : "md:hidden"
           )}
-        </div>
+        >
+          <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
+    </>
+  );
+}
 
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("sidebar.startService")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>{t("sidebar.startServiceDesc")}</p>
-            <div className="bg-muted rounded-lg p-3 font-mono text-xs space-y-1">
-              <p className="text-foreground font-semibold">cd backend</p>
-              <p className="text-foreground font-semibold">python -m uvicorn app.main:app --host 0.0.0.0 --port {window.location.port || 12002} --reload</p>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </aside>
+export default function Sidebar() {
+  const { collapsed, mobileOpen, setMobileOpen } = useShell();
+
+  return (
+    <>
+      {/* Desktop rail */}
+      <aside
+        className={cn(
+          "sidebar-gradient relative z-40 hidden h-full flex-none flex-col transition-[width] duration-200 md:flex",
+          collapsed ? "w-[68px]" : "w-60"
+        )}
+      >
+        <SidebarContent collapsed={collapsed} />
+      </aside>
+
+      {/* Mobile drawer */}
+      <div
+        className={cn(
+          "fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity md:hidden",
+          mobileOpen ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+        onClick={() => setMobileOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        className={cn(
+          "sidebar-gradient fixed inset-y-0 left-0 z-50 flex w-60 flex-col transition-transform duration-200 md:hidden",
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+        aria-hidden={!mobileOpen}
+      >
+        <SidebarContent collapsed={false} onNavigate={() => setMobileOpen(false)} />
+      </aside>
+    </>
   );
 }

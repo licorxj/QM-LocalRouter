@@ -13,7 +13,10 @@
     "startServiceDesc": "The backend service is not running. Please execute the following command in a terminal:",
     "startServiceHint": "The page will automatically detect the service status after startup.",
     "endpoints": "Endpoints & Auth",
-    "forwarding": "Routing & Forwarding"
+    "forwarding": "Routing & Forwarding",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "closeMenu": "Close menu"
   },
   "settings": {
     "appearance": "Appearance",
@@ -177,7 +180,13 @@
     "total": "Total",
     "page": "Page",
     "of": "of",
-    "items": "items"
+    "items": "items",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "language": "Language",
+    "dangerZone": "Danger zone"
   },
   "providers": {
     "title": "Upstream Providers",
@@ -400,7 +409,26 @@
     "cliOpencodeNote": "OpenCode talks to your local opencode serve (recommended --port 4096, e.g. http://127.0.0.1:4096): start the server, then enter its URL and password (free models can leave it blank)",
     "cliOpencodePassword": "Server password (only if the server enables auth, may be blank)",
     "cliTokenPlaceholderTrae": "Cloud-IDE-JWT (capture from solo.trae.ai request headers, ~14 days)",
-    "cliTokenPlaceholderQ": "access token (optional: import refresh creds only, token is minted on forward)"
+    "cliTokenPlaceholderZcode": "ZCode Coding Plan JWT (use \"Browser Login\" above to obtain one)",
+    "cliZcodeNote": "Recommended: \"Detect Local Credentials\" auto-decrypts the official client token (plan quota is bound to that identity); browser login / pasting JWT as fallback",
+    "cliTokenPlaceholderQ": "access token (optional: import refresh creds only, token is minted on forward)",
+    "freeModels": "Free Models",
+    "freeModelsTitle": "Free Model Collection",
+    "freeModelsSubtitle": "Anonymous free channels from public gateways — no sign-up or API key needed. Click Add to include them in platform management.",
+    "freeNoKey": "No key required",
+    "freeJoin": "Add",
+    "freeJoined": "Added",
+    "freeJoinDone": "Added to platform management",
+    "freeResynced": "Platform exists; free models synced",
+    "freeJoinFailed": "Add failed",
+    "freeChannelEmpty": "No channels available. Click refresh to retry.",
+    "freeRefresh": "Refresh",
+    "freeModelCount": "free models",
+    "freeNeedGateway": "Gateway required",
+    "freeGatewayHint": "The upstream validates client fingerprints (direct Python requests are rejected with 429). Join through a local opencode2api gateway: start it, then enter its OpenAI-compatible URL (see github.com/jasonxu114514/opencode2api)",
+    "freeGatewayUrl": "Gateway URL",
+    "freeGatewayKey": "Gateway key (optional)",
+    "freeConfirmJoin": "Confirm"
   },
   "strategies": {
     "title": "Routing Strategies",
@@ -540,7 +568,12 @@
     "rulesCount": "rules",
     "ms": "ms",
     "clearToday": "Clear Today",
-    "clearTodayDesc": "Clear all request logs for today"
+    "clearTodayDesc": "Clear all request logs for today",
+    "announcements": "Announcements",
+    "noAnnouncements": "No announcements yet",
+    "sponsorSlots": "Sponsor Seats",
+    "sponsorEmpty": "Slot Available",
+    "sponsorVisit": "Visit Website"
   },
   "chat": {
     "title": "AI Chat",

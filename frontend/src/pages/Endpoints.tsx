@@ -14,7 +14,8 @@ import { Badge } from "../components/ui/badge";
 import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "../components/ui/select";
-import { Copy, Loader2, KeyRound, Link2, Network, ShieldCheck, Save, Trash2 } from "lucide-react";
+import { PageHeader, CodeBlock, CopyButton, ConfirmDialog } from "../components/shared";
+import { Loader2, KeyRound, Link2, Network, ShieldCheck, Save, Trash2 } from "lucide-react";
 
 export default function Endpoints() {
   const { t, locale } = useI18n();
@@ -39,6 +40,7 @@ export default function Endpoints() {
 
   // --- Virtual keys ---
   const [newKeyName, setNewKeyName] = useState("");
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<any>(null);
   const { data: clientKeys = [], refetch: refetchClientKeys } = useQuery({ queryKey: ["clientKeys"], queryFn: () => getClientKeys().then((r) => r.data) });
   const createKeyMut = useMutation({
     mutationFn: (name: string) => createClientKey({ name }),
@@ -86,32 +88,23 @@ export default function Endpoints() {
   const endpointDesc = (e: any) => (locale.startsWith("zh") ? e.desc?.zh : e.desc?.en) || e.path;
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">{t("endpoints.title")}</h1>
-        <p className="text-sm text-muted-foreground mt-1">{t("endpoints.subtitle")}</p>
-      </div>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title={t("endpoints.title")} description={t("endpoints.subtitle")} />
 
       {/* Access URLs */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><Link2 className="h-4 w-4 text-cyan-400" /><CardTitle className="text-base">{t("settings.accessUrls")}</CardTitle></div>
+          <div className="flex items-center gap-2"><Link2 className="h-4 w-4 text-info" aria-hidden="true" /><CardTitle className="text-base">{t("settings.accessUrls")}</CardTitle></div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div>
             <Label className="text-xs text-muted-foreground">{t("settings.localUrl")}</Label>
-            <div className="flex items-center gap-2 mt-1.5">
-              <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{localProxyUrl}</code>
-              <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyKey(localProxyUrl)}><Copy className="h-4 w-4" /></Button>
-            </div>
+            <CodeBlock code={localProxyUrl} className="mt-1.5" />
           </div>
           {appSettings.lan_access && lanIp && (
             <div>
               <Label className="text-xs text-muted-foreground">{t("settings.lanAddress")}</Label>
-              <div className="flex items-center gap-2 mt-1.5">
-                <code className="flex-1 font-mono text-sm bg-muted p-3 rounded-lg text-foreground">{proxyUrl}</code>
-                <Button variant="outline" size="icon" className="shrink-0" onClick={() => copyKey(proxyUrl)}><Copy className="h-4 w-4" /></Button>
-              </div>
+              <CodeBlock code={proxyUrl} className="mt-1.5" />
             </div>
           )}
           <p className="text-xs text-muted-foreground">{t("settings.accessUrlsDesc")}</p>
@@ -121,7 +114,7 @@ export default function Endpoints() {
       {/* Access authentication */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-amber-400" /><CardTitle className="text-base">{t("settings.authMode")}</CardTitle></div>
+          <div className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-warning" aria-hidden="true" /><CardTitle className="text-base">{t("settings.authMode")}</CardTitle></div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
@@ -162,14 +155,14 @@ export default function Endpoints() {
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 {(clientKeys as any[]).map((k: any) => (
                   <div key={k.id} className="flex items-center gap-3 rounded-lg border p-3">
-                    <Switch checked={k.is_active} onCheckedChange={(v) => toggleKeyMut.mutate({ id: k.id, is_active: v })} />
+                    <Switch checked={k.is_active} onCheckedChange={(v) => toggleKeyMut.mutate({ id: k.id, is_active: v })} aria-label={k.name} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{k.name || t("settings.unnamedKey")}</p>
                       <button className="font-mono text-xs text-muted-foreground truncate block max-w-full hover:underline" onClick={() => copyKey(k.key_value)}>{k.key_value}</button>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyKey(k.key_value)}><Copy className="h-3.5 w-3.5" /></Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive shrink-0" onClick={() => { if (confirm(t("settings.confirmDeleteKey"))) deleteKeyMut.mutate(k.id); }}>
-                      <Trash2 className="h-3.5 w-3.5" />
+                    <CopyButton value={k.key_value} label={t("common.copy")} className="shrink-0" />
+                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive shrink-0" aria-label={t("common.delete")} onClick={() => setConfirmDeleteKey(k)}>
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   </div>
                 ))}
@@ -188,7 +181,7 @@ export default function Endpoints() {
       {/* Browser login (OAuth) */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-400" /><CardTitle className="text-base">{t("settings.oauthCard")}</CardTitle>
+          <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-success" aria-hidden="true" /><CardTitle className="text-base">{t("settings.oauthCard")}</CardTitle>
             {authStatus && (
               <Badge variant={authStatus.configured ? "success" : "secondary"} className="text-[10px]">
                 {authStatus.configured ? t("settings.oauthConfigured") : t("settings.oauthNotConfigured")}
@@ -230,7 +223,7 @@ export default function Endpoints() {
       {/* Endpoint groups + registry */}
       <Card className="card-hover">
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2"><Network className="h-4 w-4 text-purple-400" /><CardTitle className="text-base">{t("settings.endpointList")}</CardTitle></div>
+          <div className="flex items-center gap-2"><Network className="h-4 w-4 text-primary" aria-hidden="true" /><CardTitle className="text-base">{t("settings.endpointList")}</CardTitle></div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
@@ -262,6 +255,19 @@ export default function Endpoints() {
           </div>
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={confirmDeleteKey !== null}
+        onOpenChange={(o) => !o && setConfirmDeleteKey(null)}
+        title={t("settings.confirmDeleteKey")}
+        description={confirmDeleteKey?.name || confirmDeleteKey?.key_value}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        onConfirm={() => {
+          if (confirmDeleteKey) deleteKeyMut.mutate(confirmDeleteKey.id);
+          setConfirmDeleteKey(null);
+        }}
+      />
     </div>
   );
 }

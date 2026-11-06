@@ -38,6 +38,33 @@ async def oauth_start(data: OauthStart, db: AsyncSession = Depends(get_db)):
     profile_id = data.profile_id or provider.auth_type
     if not profile_id or profile_id == "api_key":
         raise HTTPException(400, "This provider is not configured for OAuth login (auth_type is 'api_key')")
+
+    # CLI 平台（local_cli）的浏览器授权桥接：供应商密钥对话框与 CLI 导入对话框
+    # 共用同一套本地会话机制，轮询由 /api/oauth/status 按会话来源分发
+    from app.services import local_cli
+    cli_platform = local_cli.get_cli_platform(profile_id)
+    if cli_platform:
+        try:
+            if profile_id == "zcode":
+                flow = await local_cli.start_zcode_session(data.provider_id)
+            elif profile_id == "cline":
+                flow = local_cli.start_cline_session(data.provider_id)
+            elif profile_id == "amazon-q":
+                flow = local_cli.start_amazonq_session(data.provider_id)
+            elif profile_id == "antigravity":
+                flow = local_cli.start_antigravity_session(data.provider_id, "", "")
+            elif profile_id in local_cli.WORKBUDDY_REGION_BY_PLATFORM:
+                flow = await local_cli.start_workbuddy_session(data.provider_id, profile_id)
+            else:
+                raise HTTPException(400, f"CLI platform '{profile_id}' has no browser login flow")
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(502, f"Failed to start browser flow: {str(e)[:200]}")
+        return {**flow, "profile_id": profile_id, "label": cli_platform.get("label", profile_id)}
+
     profile = op.get_profile(profile_id)
     if not profile:
         raise HTTPException(400, f"Unknown OAuth profile: {profile_id}")
@@ -79,7 +106,23 @@ async def oauth_callback(session_id: str, code: str = "", state: str = "", error
 async def oauth_status(session_id: str, db: AsyncSession = Depends(get_db)):
     session = op.get_session(session_id)
     if not session:
-        return {"status": "expired"}
+        # CLI 平台浏览器授权会话的轮询桥接（zcode / amazon-q / workbuddy 需主动拉取；
+        # cline / antigravity 由本地回调页完成，此处只读状态）
+        from app.services import local_cli
+        cli = local_cli.get_cli_session(session_id)
+        if not cli:
+            return {"status": "expired"}
+        if cli["status"] == "pending":
+            if cli["flow"] == "cli-aws-device":
+                result = await local_cli.poll_amazonq_session(session_id, db)
+            elif cli["flow"] == "cli-workbuddy":
+                result = await local_cli.poll_workbuddy_session(session_id, db)
+            elif cli["flow"] == "cli-zcode":
+                result = await local_cli.poll_zcode_session(session_id, db)
+            else:
+                result = {"status": "pending"}
+            return result
+        return {"status": cli["status"], "key_id": cli.get("key_id"), "error": cli.get("error", "")}
     if session.get("flow") in ("device", "codebuddy") and session["status"] == "pending":
         # Device flows: each status poll drives one token-poll attempt upstream
         result = await op.poll_device_session(session_id, db)

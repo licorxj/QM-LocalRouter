@@ -162,6 +162,8 @@ async def cli_browser_start(data: CliBrowserStart):
             return lc.start_amazonq_session(data.provider_id)
         if data.platform == "antigravity":
             return lc.start_antigravity_session(data.provider_id, data.client_id, data.client_secret)
+        if data.platform == "zcode":
+            return await lc.start_zcode_session(data.provider_id)
         if data.platform in lc.WORKBUDDY_REGION_BY_PLATFORM:
             return await lc.start_workbuddy_session(data.provider_id, data.platform)
     except ValueError as e:
@@ -211,19 +213,23 @@ async def cli_status(session_id: str, db: AsyncSession = Depends(get_db)):
         result = await lc.poll_workbuddy_session(session_id, db)
         result.setdefault("authorize_url", session.get("authorize_url", ""))
         return result
+    if session["flow"] == "cli-zcode" and session["status"] == "pending":
+        result = await lc.poll_zcode_session(session_id, db)
+        result.setdefault("authorize_url", session.get("authorize_url", ""))
+        return result
     return {"status": session["status"], "key_id": session["key_id"], "error": session["error"]}
 
 
 # ---------------------------------------------------------------- WorkBuddy
 
-class WorkBuddyModelsRequest(BaseModel):
+class CliModelsRequest(BaseModel):
     provider_id: int = 0     # 0 => 自动定位 workbuddy provider
     key_id: int = 0          # 指定凭据；0 => 取该 provider 第一把 active key
     region: str = ""         # 留空则用凭据里保存的区域
     sync: bool = False       # True => 写入/更新 Model 表
 
 
-async def _resolve_workbuddy_credential(data: "WorkBuddyModelsRequest", db: AsyncSession):
+async def _resolve_workbuddy_credential(data: "CliModelsRequest", db: AsyncSession):
     """返回 (provider, api_key, region, credential)。"""
     from app.services import workbuddy
     from sqlalchemy import select
@@ -257,7 +263,7 @@ async def _resolve_workbuddy_credential(data: "WorkBuddyModelsRequest", db: Asyn
 
 
 @router.post("/workbuddy/models")
-async def workbuddy_models(data: WorkBuddyModelsRequest, db: AsyncSession = Depends(get_db)):
+async def workbuddy_models(data: CliModelsRequest, db: AsyncSession = Depends(get_db)):
     """拉取 WorkBuddy 官方模型目录（/v3/config），sync=true 时同步进 Model 表。"""
     from app.services import workbuddy
 
@@ -310,3 +316,32 @@ async def _upsert_models(db: AsyncSession, provider_id: int, items: list[dict]) 
     if touched:
         await db.commit()
     return touched
+
+
+# ---------------------------------------------------------------- ZCode
+
+@router.post("/zcode/models")
+async def zcode_models(data: CliModelsRequest, db: AsyncSession = Depends(get_db)):
+    """同步 ZCode 静态模型目录（GLM-5.3 / GLM-5.3-Flash）进 Model 表。"""
+    from app.services import zcode
+
+    provider = None
+    if data.provider_id:
+        provider = await db.get(Provider, data.provider_id)
+    else:
+        from sqlalchemy import select
+        result = await db.execute(
+            select(Provider).where(Provider.auth_type == "zcode").order_by(Provider.id)
+        )
+        provider = result.scalars().first()
+    if not provider:
+        raise HTTPException(404, "未找到 ZCode 供应商，请先完成 CLI 导入")
+
+    synced = 0
+    if data.sync:
+        synced = await _upsert_models(db, provider.id, zcode.DEFAULT_MODELS)
+    return {
+        "provider_id": provider.id,
+        "models": zcode.DEFAULT_MODELS,
+        "synced": synced,
+    }

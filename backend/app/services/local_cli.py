@@ -159,6 +159,31 @@ CLI_PLATFORMS: dict[str, dict] = {
         },
         "match_keywords": ["workbuddy.ai", "codebuddy.ai"],
     },
+    "zcode": {
+        # ZCode CLI（zcode.z.ai）上游是带客户端指纹校验的 Anthropic 兼容端点，
+        # 翻译在 services/zcode.py（移植 D3-vin/Zcode2Api）。
+        # 推荐导入路径：读取官方桌面端 ~/.zcode/v2/credentials.json 的
+        # zcodejwttoken（enc:v1 本机解密）——它是真实挂载了计划的对话身份；
+        # OAuth cli 流程签发的 token 没有 plan（1005 exceed quota limit），
+        # 仅作为备用（浏览器授权 / 粘贴 JWT）。
+        "label": "ZCode (z.ai · GLM)",
+        "flow": "local_cli",
+        "import_modes": ["detect", "browser", "paste"],
+        "detect_paths": [
+            ("~/.zcode/v2/credentials.json", "zcode_creds", "ZCode 官方客户端凭据"),
+            (os.path.join(os.environ.get("USERPROFILE", ""), ".zcode", "v2", "credentials.json") if os.environ.get("USERPROFILE") else "", "zcode_creds", "ZCode 官方客户端凭据"),
+        ],
+        "token_fields": ["access_token"],
+        "refresh": None,  # JWT 长效；失效后重新检测导入或重新授权
+        "upstream": {
+            "api_base": "https://zcode.z.ai",
+            "chat_path": "/api/v1/zcode-plan/anthropic",
+            "auth": "zcode",                                 # services/zcode.py：双头 Bearer+x-api-key + 指纹
+            "profile_id": "zcode",
+            "protocols": ["openai", "custom"],
+        },
+        "match_keywords": ["zcode", "zcode.z.ai"],
+    },
 }
 
 # WorkBuddy 平台条目 -> 官方区域（浏览器登录与上游调用都按条目固定区域）
@@ -238,6 +263,15 @@ def detect_credentials(platform_id: str) -> list[dict]:
                         "source": source,
                         "fields": ["server password"],
                     })
+            elif kind == "zcode_creds":
+                # ZCode 桌面端凭据文件：zcodejwttoken 是挂载了计划的对话身份
+                data = _read_json(mp)
+                if isinstance(data, dict) and (data.get("zcodejwttoken") or data.get("oauth:zai:access_token")):
+                    found.append({
+                        "path": mp.replace(HOME, "~"),
+                        "source": source,
+                        "fields": ["zcode JWT（本机自动解密）"],
+                    })
             elif kind == "scan":
                 data = _read_json(mp)
                 if data:
@@ -254,6 +288,26 @@ def extract_credentials(platform_id: str, path: str) -> dict:
     if not os.path.exists(path):
         raise ValueError(f"File not found: {path}")
     data = _read_json(path) or {}
+    if platform_id == "zcode":
+        # 优先读官方 CLI 的对话令牌 zcodejwttoken（enc:v1 本机解密）——它才是
+        # 挂载了计划的对话身份；OAuth cli 流程签发的 token 无 plan（1005）
+        from app.services import zcode as zcode_svc
+        raw = data.get("zcodejwttoken") or ""
+        token = zcode_svc.decrypt_credential_blob(raw) if raw else ""
+        if not token and data.get("oauth:zai:access_token"):
+            token = zcode_svc.decrypt_credential_blob(data["oauth:zai:access_token"])
+        if token:
+            out = {"access_token": token}
+            user_info = data.get("oauth:zai:user_info")
+            if isinstance(user_info, str):
+                try:
+                    info = json.loads(zcode_svc.decrypt_credential_blob(user_info))
+                    if isinstance(info, dict) and info.get("email"):
+                        out["email"] = info["email"]
+                except Exception:
+                    pass
+            return out
+        raise ValueError("credentials.json 中没有可用令牌；请先在官方 ZCode 客户端登录，或使用「浏览器授权登录」/粘贴 JWT")
     out: dict = {}
     if platform_id == "opencode":
         entry = (data.get("opencode") or {})
@@ -613,6 +667,90 @@ async def poll_workbuddy_session(session_id: str, db: AsyncSession) -> dict:
         await db.commit()
     _complete_cli(session_id, key.id)
     return {"status": "success", "key_id": key.id, "account": result.get("account", {})}
+
+
+# ---------------------------------------------------------------- ZCode (z.ai)
+# 官方 OAuth CLI 流程（Zcode2Api login.go 同款，非标准 PKCE）：本地生成 pollToken
+# 作 Bearer 向 zcode.z.ai 注册授权 flow，用户浏览器完成 z.ai 登录后轮询换取
+# Coding Plan JWT。流程 TTL 300s。
+
+ZCODE_OAUTH_BASE = "https://zcode.z.ai/api/v1"
+ZCODE_OAUTH_TTL = 300
+
+
+async def start_zcode_session(provider_id: int) -> dict:
+    session_id, session = _new_session(provider_id, "zcode", "cli-zcode")
+    poll_token = secrets.token_hex(32)
+    try:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            resp = await client.post(
+                f"{ZCODE_OAUTH_BASE}/oauth/cli/init",
+                json={"provider": "zai"},
+                headers={"Authorization": f"Bearer {poll_token}",
+                         "Content-Type": "application/json", "Accept": "application/json"})
+    except httpx.HTTPError as e:
+        raise ValueError(f"ZCode OAuth init 请求失败: {str(e)[:200]}")
+    if resp.status_code != 200:
+        raise ValueError(f"ZCode OAuth init HTTP {resp.status_code}")
+    data = (resp.json() or {}).get("data") or {}
+    flow_id = data.get("flow_id") or ""
+    authorize_url = data.get("authorize_url") or ""
+    if not flow_id or not authorize_url:
+        raise ValueError("ZCode OAuth init 返回数据不完整")
+    session.update({"poll_token": poll_token, "flow_id": flow_id, "authorize_url": authorize_url})
+    return {"session_id": session_id, "flow": "cli-zcode", "authorize_url": authorize_url,
+            "expires_in": ZCODE_OAUTH_TTL}
+
+
+async def poll_zcode_session(session_id: str, db: AsyncSession) -> dict:
+    """轮询 ZCode 授权状态，ready 后把 Coding Plan JWT 写入 ApiKey。"""
+    session = _cli_sessions.get(session_id)
+    if not session:
+        return {"status": "expired"}
+    if session["status"] != "pending":
+        return {"status": session["status"], "key_id": session.get("key_id"),
+                "error": session.get("error", "")}
+    if time.time() - session["created"] > ZCODE_OAUTH_TTL:
+        _complete_cli(session_id, 0, "authorization timed out")
+        return {"status": "failed", "error": "authorization timed out"}
+
+    try:
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            resp = await client.get(
+                f"{ZCODE_OAUTH_BASE}/oauth/cli/poll/{session['flow_id']}",
+                headers={"Authorization": f"Bearer {session['poll_token']}",
+                         "Accept": "application/json"})
+    except httpx.HTTPError:
+        return {"status": "pending", "authorize_url": session.get("authorize_url", "")}
+    if resp.status_code != 200:
+        return {"status": "pending", "authorize_url": session.get("authorize_url", "")}
+    try:
+        data = (resp.json() or {}).get("data") or {}
+    except ValueError:
+        return {"status": "pending", "authorize_url": session.get("authorize_url", "")}
+
+    status = data.get("status")
+    if status == "failed":
+        msg = data.get("message") or data.get("reason") or "authorization failed or was denied"
+        _complete_cli(session_id, 0, str(msg)[:200])
+        return {"status": "failed", "error": str(msg)[:200]}
+    if status != "ready" or not data.get("token"):
+        return {"status": "pending", "authorize_url": session.get("authorize_url", "")}
+
+    credential = {
+        "access_token": data["token"],
+        "zai_access_token": (data.get("zai") or {}).get("access_token", ""),
+    }
+    email = (data.get("user") or {}).get("email", "")
+    if email:
+        credential["email"] = email
+    provider_id = await ensure_provider(db, session["platform_id"], session["provider_id"])
+    key = await store_cli_key(db, provider_id, session["platform_id"], credential)
+    if email:
+        key.alias = email
+        await db.commit()
+    _complete_cli(session_id, key.id)
+    return {"status": "success", "key_id": key.id, "account": email or "zcode"}
 
 
 async def ensure_provider(db: AsyncSession, platform_id: str, provider_id: int) -> int:

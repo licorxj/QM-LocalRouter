@@ -46,6 +46,19 @@ class Forwarder:
         # OAuth tokens for Claude subscriptions authenticate with Bearer + the oauth beta header
         return {"Authorization": f"Bearer {real_key}", "anthropic-beta": "oauth-2025-04-20"}
 
+    @staticmethod
+    async def _ensure_local_gateway(base_url: str) -> None:
+        """本地网关类 Provider（如 OpenCode 免费车道的 opencode2api）：
+        转发前探活，未运行时自动拉起根目录的网关 exe（详见 free_models.ensure_local_gateway）。
+        失败不阻断原请求，由上游连接错误正常返回。"""
+        if not base_url or ("127.0.0.1" not in base_url and "localhost" not in base_url):
+            return
+        try:
+            from app.services.free_models import ensure_local_gateway
+            await ensure_local_gateway(base_url)
+        except Exception:
+            pass
+
     def _oauth_upstream(self, api_key: ApiKey) -> dict | None:
         """Profile 'upstream' config for OAuth/CLI-imported keys (auth headers, styles)."""
         if not api_key.oauth_profile:
@@ -150,6 +163,55 @@ class Forwarder:
             return
         yield "data: [DONE]\n\n"
 
+    # ---------------------------------------------------------------- ZCode
+    # ZCode（zcode.z.ai · z.ai GLM）上游是带客户端指纹校验的 Anthropic 兼容端点：
+    # OpenAI 请求先转 Anthropic Messages，再按官方客户端指纹（请求头 + 官方 system
+    # 三段块 + 设备身份）规范化，上游 SSE 翻译回 OpenAI。翻译在 services/zcode.py。
+    def _zcode_context(self, provider: Provider, real_key: str):
+        from app.services import zcode as zcode_svc
+        return zcode_svc.ZcodeClient(provider.base_url or zcode_svc.ZCODE_API_BASE,
+                                     real_key, timeout=600)
+
+    async def _forward_zcode(self, provider: Provider, model: Model, api_key: ApiKey,
+                             real_key: str, request_body: dict, timeout: int) -> httpx.Response:
+        from app.services import zcode as zcode_svc
+        client = self._zcode_context(provider, real_key)
+        client.timeout = timeout or 600
+        temperature = request_body.get("temperature", 0.7)
+        effort = request_body.get("reasoning_effort") or (request_body.get("reasoning") or {}).get("effort")
+        try:
+            value = await client.chat_completion(request_body, model.model_id,
+                                                 temperature=temperature,
+                                                 reasoning_effort=effort)
+        except zcode_svc.ZcodeError as e:
+            payload = {"error": {"message": e.message, "type": e.code, "code": e.code}}
+            if e.retry_after:
+                payload["retry_after"] = e.retry_after
+            return httpx.Response(status_code=e.status or 502,
+                                  content=json.dumps(payload, ensure_ascii=False).encode(),
+                                  headers={"content-type": "application/json"})
+        return httpx.Response(status_code=200, content=json.dumps(value, ensure_ascii=False).encode(),
+                              headers={"content-type": "application/json"})
+
+    async def _forward_zcode_stream(self, provider: Provider, model: Model, api_key: ApiKey,
+                                    real_key: str, request_body: dict, timeout: int):
+        from app.services import zcode as zcode_svc
+        client = self._zcode_context(provider, real_key)
+        client.timeout = max(timeout or 600, 600)
+        temperature = request_body.get("temperature", 0.7)
+        effort = request_body.get("reasoning_effort") or (request_body.get("reasoning") or {}).get("effort")
+        try:
+            async for chunk in client.stream_chunks(request_body, model.model_id,
+                                                    temperature=temperature,
+                                                    reasoning_effort=effort):
+                chunk["model"] = model.model_id
+                yield "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
+        except zcode_svc.ZcodeError as e:
+            yield "data: " + json.dumps({"error": {"message": e.message, "type": e.code, "code": e.code}},
+                                       ensure_ascii=False) + "\n\n"
+            return
+        yield "data: [DONE]\n\n"
+
     # ---------------------------------------------------------------- WorkBuddy
     # WorkBuddy/CodeBuddy 上游不是标准 OpenAI 端点：需要 IDE 身份头 + 会话头，
     # 且只提供 SSE 流式对话（/v2/chat/completions），非流式在本地聚合。
@@ -173,6 +235,18 @@ class Forwarder:
             headers["Authorization"] = f"Bearer {real_key}"
         return headers
 
+    @staticmethod
+    def _openai_headers(provider: Provider, real_key: str) -> dict:
+        """openai/custom 通用鉴权头；auth_type="none" 的免密上游不带 Authorization。
+
+        免费公共网关（OpenCode Zen / Kilo 免费池）实测不接受伪造 Bearer，
+        只有完全不发送认证头才可用。
+        """
+        headers = {"Content-Type": "application/json"}
+        if (provider.auth_type or "") != "none":
+            headers["Authorization"] = f"Bearer {real_key}"
+        return headers
+
     # ------------------------------------------------------------ passthrough
     # 客户端请求格式与上游协议一致时原样透传：不做 messages->claude 之类的
     # 双向转换，省一次序列化/反序列化，也不丢字段。
@@ -190,7 +264,7 @@ class Forwarder:
             return None
 
         profile_id = str(upstream.get("profile_id", ""))
-        if profile_id in ("opencode", "cline") or profile_id.startswith("workbuddy"):
+        if profile_id in ("opencode", "cline", "zcode") or profile_id.startswith("workbuddy"):
             return None
         if upstream.get("upstream_style") == "responses":
             return None
@@ -217,7 +291,7 @@ class Forwarder:
         else:  # openai / custom
             chat_path = upstream.get("chat_path") or "/chat/completions"
             url = f"{base_url}{chat_path}"
-            headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json", **extra_headers}
+            headers = {**self._openai_headers(provider, real_key), **extra_headers}
 
         if is_stream:
             body["stream"] = True
@@ -232,6 +306,7 @@ class Forwarder:
         protocol = provider.protocol
         base_url = provider.base_url.rstrip("/")
         upstream = self._oauth_upstream(api_key) or {}
+        await self._ensure_local_gateway(base_url)
         extra_headers = upstream.get("extra_headers") or {}
         responses_style = upstream.get("upstream_style") == "responses"
 
@@ -245,6 +320,10 @@ class Forwarder:
 
         if upstream.get("profile_id") == "cline":
             return await self._forward_cline(provider, model, api_key, real_key,
+                                            request_body, strategy.timeout or 120)
+
+        if upstream.get("profile_id") == "zcode":
+            return await self._forward_zcode(provider, model, api_key, real_key,
                                             request_body, strategy.timeout or 120)
 
         # 客户端格式与上游协议一致：原样透传，跳过所有协议转换
@@ -275,7 +354,7 @@ class Forwarder:
             if upstream.get("auth") and upstream.get("auth") != "bearer":
                 headers = self._apply_upstream_auth({"Content-Type": "application/json"}, upstream, real_key)
             else:
-                headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
+                headers = self._openai_headers(provider, real_key)
             headers.update(extra_headers)
             chat_path = upstream.get("chat_path") or "/chat/completions"
             url = f"{base_url}{chat_path}"
@@ -348,6 +427,7 @@ class Forwarder:
         protocol = provider.protocol
         base_url = provider.base_url.rstrip("/")
         upstream = self._oauth_upstream(api_key) or {}
+        await self._ensure_local_gateway(base_url)
         extra_headers = upstream.get("extra_headers") or {}
 
         if str(upstream.get("profile_id", "")).startswith("workbuddy"):
@@ -366,6 +446,13 @@ class Forwarder:
 
         if upstream.get("profile_id") == "cline":
             async for line in self._forward_cline_stream(
+                provider, model, api_key, real_key, request_body, strategy.timeout or 120
+            ):
+                yield line
+            return
+
+        if upstream.get("profile_id") == "zcode":
+            async for line in self._forward_zcode_stream(
                 provider, model, api_key, real_key, request_body, strategy.timeout or 120
             ):
                 yield line
@@ -422,7 +509,7 @@ class Forwarder:
             if upstream.get("auth") and upstream.get("auth") != "bearer":
                 headers = self._apply_upstream_auth({"Content-Type": "application/json"}, upstream, real_key)
             else:
-                headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
+                headers = self._openai_headers(provider, real_key)
             headers.update(extra_headers)
             chat_path = upstream.get("chat_path") or "/chat/completions"
             url = f"{base_url}{chat_path}"

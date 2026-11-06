@@ -40,12 +40,12 @@ const MODEL_TYPE_ICONS: Record<ModelType, typeof Bot> = {
 };
 
 const MODEL_TYPE_COLORS: Record<ModelType, string> = {
-  text: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-  image: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-  tts: 'bg-green-500/10 text-green-600 dark:text-green-400',
-  video: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-  audio: 'bg-green-500/10 text-green-600 dark:text-green-400',
-  embedding: 'bg-gray-500/10 text-gray-600 dark:text-gray-400',
+  text: 'bg-info/12 text-info',
+  image: 'bg-primary/12 text-primary',
+  tts: 'bg-success/12 text-success',
+  video: 'bg-warning/12 text-warning',
+  audio: 'bg-success/12 text-success',
+  embedding: 'bg-muted text-muted-foreground',
 };
 
 type MediaKind = 'image' | 'audio' | 'video' | 'file';
@@ -357,22 +357,22 @@ export default function Chat() {
   const placeholderText = selectedModelType === 'image' ? t('chat.placeholderImage') : selectedModelType === 'tts' ? t('chat.placeholderTts') : selectedModelType === 'video' ? t('chat.placeholderVideo') : t('chat.placeholder');
   const TypeIcon = MODEL_TYPE_ICONS[selectedModelType] || Zap;
   return (
-    <div className='flex h-[calc(100vh-4rem)] -m-8'>
+    <div className='flex h-[calc(100vh-3.5rem)] -m-6 lg:-m-8'>
       <div className='w-64 border-r bg-muted/30 flex flex-col'>
         <div className='p-3 border-b'>
-          <Button size='sm' className='w-full gap-2' onClick={handleNewChat}><Plus className='h-4 w-4' />{t('chat.newChat')}</Button>
-          <div className='relative mt-2'><Search className='absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground' /><input value={convSearch} onChange={e => setConvSearch(e.target.value)} placeholder={t('chat.searchConv')} className='w-full pl-7 pr-2 py-1.5 text-xs rounded-md border bg-background' /></div>
+          <Button size='sm' className='w-full gap-2' onClick={handleNewChat}><Plus className='h-4 w-4' aria-hidden='true' />{t('chat.newChat')}</Button>
+          <div className='relative mt-2'><Search className='absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground' aria-hidden='true' /><input value={convSearch} onChange={e => setConvSearch(e.target.value)} placeholder={t('chat.searchConv')} aria-label={t('chat.searchConv')} className='w-full pl-7 pr-2 py-1.5 text-xs rounded-md border bg-background' /></div>
         </div>
-        <div className='flex-1 overflow-y-auto'>
+        <div className='flex-1 overflow-y-auto py-1'>
           {filteredConvList.length === 0 && <div className='p-4 text-xs text-muted-foreground text-center'>{t('chat.noHistory')}</div>}
           {filteredConvList.map(conv => (
-            <div key={conv.id} onClick={() => loadConversation(conv)} className={'group flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-accent/50 transition-colors ' + (activeConvId === conv.id ? 'bg-accent/70' : '')}>
-              <MessageSquare className='h-3.5 w-3.5 flex-shrink-0 text-muted-foreground' />
+            <div key={conv.id} onClick={() => loadConversation(conv)} className={'group mx-2 mb-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 cursor-pointer transition-colors ' + (activeConvId === conv.id ? 'bg-primary/10' : 'hover:bg-accent')}>
+              <MessageSquare className={'h-3.5 w-3.5 flex-shrink-0 ' + (activeConvId === conv.id ? 'text-primary' : 'text-muted-foreground')} aria-hidden='true' />
               <div className='flex-1 min-w-0'>
-                <div className='text-xs font-medium truncate'>{conv.title}</div>
+                <div className={'text-xs font-medium truncate ' + (activeConvId === conv.id ? 'text-primary' : '')}>{conv.title}</div>
                 {conv.model_used && <div className='text-[10px] text-muted-foreground truncate mt-0.5'>{conv.chat_mode === 'strategy' ? '\u{1F3AF} ' : '\u{1F527} '}{conv.model_used}{conv.stream_mode ? ' \u{1F4E1}' : ' \u{1F4DD}'}</div>}
               </div>
-              <button onClick={(e) => handleDeleteConv(conv.id, e)} className='opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:text-destructive'><Trash2 className='h-3 w-3' /></button>
+              <button onClick={(e) => handleDeleteConv(conv.id, e)} aria-label={t('common.delete')} className='opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity p-1 hover:text-destructive'><Trash2 className='h-3 w-3' aria-hidden='true' /></button>
             </div>
           ))}
         </div>
@@ -380,10 +380,10 @@ export default function Chat() {
 
       <div className='flex-1 flex flex-col'>
         <div className='border-b px-6 py-3 flex items-center gap-3 bg-background/80 backdrop-blur-sm'>
-          <div className='flex items-center gap-2 flex-1'>
-            <div className='flex items-center gap-1 rounded-lg border p-0.5'>
-              <button onClick={() => { setChatMode('strategy'); setSelectedModelType('text'); }} className={'px-3 py-1 text-xs rounded-md transition-colors ' + (chatMode === 'strategy' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{t('chat.modeStrategy')}</button>
-              <button onClick={() => setChatMode('model')} className={'px-3 py-1 text-xs rounded-md transition-colors ' + (chatMode === 'model' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{t('chat.modeModel')}</button>
+          <div className='flex items-center gap-2 flex-1 min-w-0 flex-wrap'>
+            <div className='flex items-center gap-0.5 rounded-lg border bg-muted/50 p-0.5'>
+              <button onClick={() => { setChatMode('strategy'); setSelectedModelType('text'); }} className={'px-3 py-1 text-xs rounded-md transition-colors ' + (chatMode === 'strategy' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-accent')}>{t('chat.modeStrategy')}</button>
+              <button onClick={() => setChatMode('model')} className={'px-3 py-1 text-xs rounded-md transition-colors ' + (chatMode === 'model' ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-accent')}>{t('chat.modeModel')}</button>
             </div>
             {chatMode === 'strategy' ? (
               <Select value={selectedStrategy} onValueChange={setSelectedStrategy}><SelectTrigger className='w-[200px] h-8 text-xs'><SelectValue placeholder={t('chat.selectStrategy')} /></SelectTrigger><SelectContent>{activeStrategies.map((s: any) => <SelectItem key={s.name} value={s.name}>{s.name}</SelectItem>)}</SelectContent></Select>
@@ -404,20 +404,20 @@ export default function Chat() {
 
         <div className='flex-1 overflow-y-auto px-6 py-4 space-y-4'>
           {messages.length === 0 && (
-            <div className='flex flex-col items-center justify-center h-full text-muted-foreground'><Boxes className='h-12 w-12 mb-3 opacity-30' /><div className='text-sm font-medium'>{t('chat.welcome')}</div><div className='text-xs mt-1'>{t('chat.welcomeHint')}</div></div>
+            <div className='flex flex-col items-center justify-center h-full text-muted-foreground'><Boxes className='h-12 w-12 mb-3 opacity-30' aria-hidden='true' /><div className='text-sm font-medium'>{t('chat.welcome')}</div><div className='text-xs mt-1'>{t('chat.welcomeHint')}</div></div>
           )}
           {messages.map((msg, idx) => (
             <div key={idx} className={'flex gap-3 ' + (msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-              {msg.role === 'assistant' && <div className='flex-shrink-0 h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center'><Bot className='h-4 w-4 text-primary' /></div>}
-              <div className={'max-w-[70%] rounded-2xl px-4 py-3 text-sm ' + (msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+              {msg.role === 'assistant' && <div className='flex-shrink-0 h-8 w-8 rounded-full bg-primary/12 flex items-center justify-center'><Bot className='h-4 w-4 text-primary' aria-hidden='true' /></div>}
+              <div className={'max-w-[70%] rounded-2xl px-4 py-3 text-sm ' + (msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'border bg-card')}>
                 {msg.files && msg.files.length > 0 && <div className='flex flex-wrap gap-2 mb-2'>{msg.files.map((f, fi) => <div key={fi}>{f.preview ? <img src={f.preview} alt={f.name} className='h-20 rounded-lg border object-cover' /> : <div className='flex items-center gap-1.5 text-xs bg-background/10 rounded-lg px-2 py-1'><FileText className='h-3 w-3' />{f.name}</div>}</div>)}</div>}
                 {msg.richType === 'image' && msg.imageUrls && msg.imageUrls.length > 0 && <div className='flex flex-wrap gap-2 mb-2'>{msg.imageUrls.map((url, ui) => <a key={ui} href={url} target='_blank' rel='noopener noreferrer' className='block'><img src={url} alt={'Generated ' + (ui + 1)} className='max-w-xs max-h-80 rounded-lg border object-contain hover:opacity-90 transition-opacity' /></a>)}</div>}
                 {msg.richType === 'audio' && msg.audioUrl && <div className='mb-2'><audio controls src={msg.audioUrl} className='w-full max-w-sm h-10' /><a href={msg.audioUrl} download='speech.mp3' className='flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1'><Download className='h-3 w-3' />{t('chat.downloadAudio')}</a></div>}
-                {msg.richType === 'video_task' && msg.videoTask && <div className='mb-2'>{msg.videoTask.status === 'completed' && msg.videoTask.videoUrl ? <div><video controls src={msg.videoTask.videoUrl} className='max-w-sm max-h-64 rounded-lg border' /><a href={msg.videoTask.videoUrl} target='_blank' rel='noopener noreferrer' className='flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1'><Download className='h-3 w-3' />{t('chat.downloadVideo')}</a></div> : <div className='flex items-center gap-2 text-xs text-muted-foreground'>{msg.videoTask.status !== 'failed' && <Loader2 className='h-4 w-4 animate-spin text-orange-500' />}<span className='font-medium'>{t('chat.videoStatus')}: </span><span className={msg.videoTask.status === 'failed' ? 'text-destructive' : 'text-orange-600 dark:text-orange-400'}>{msg.videoTask.status}</span>{msg.videoTask.id && <span className='text-[10px] opacity-60'> ({msg.videoTask.id})</span>}</div>}</div>}
+                {msg.richType === 'video_task' && msg.videoTask && <div className='mb-2'>{msg.videoTask.status === 'completed' && msg.videoTask.videoUrl ? <div><video controls src={msg.videoTask.videoUrl} className='max-w-sm max-h-64 rounded-lg border' /><a href={msg.videoTask.videoUrl} target='_blank' rel='noopener noreferrer' className='flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1'><Download className='h-3 w-3' aria-hidden='true' />{t('chat.downloadVideo')}</a></div> : <div className='flex items-center gap-2 text-xs text-muted-foreground'>{msg.videoTask.status !== 'failed' && <Loader2 className='h-4 w-4 animate-spin text-primary' aria-hidden='true' />}<span className='font-medium'>{t('chat.videoStatus')}: </span><span className={msg.videoTask.status === 'failed' ? 'text-destructive' : 'text-warning'}>{msg.videoTask.status}</span>{msg.videoTask.id && <span className='text-[10px] opacity-60'> ({msg.videoTask.id})</span>}</div>}</div>}
                 {msg.content ? <MarkdownRenderer content={msg.content} className='break-words' /> : msg.role === 'assistant' && isStreaming && idx === messages.length - 1 && <div className='flex items-center gap-1.5 text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' /><span className='text-xs'>{t('chat.thinking')}</span></div>}
                 {msg.role === 'assistant' && msg.content && <button onClick={() => copyMessage(msg.content, idx)} className='mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors'>{copiedIdx === idx ? <Check className='h-3 w-3' /> : <Copy className='h-3 w-3' />}{copiedIdx === idx ? t('common.copied') : t('common.copy')}</button>}
               </div>
-              {msg.role === 'user' && <div className='flex-shrink-0 h-8 w-8 rounded-full bg-muted flex items-center justify-center'><User className='h-4 w-4' /></div>}
+              {msg.role === 'user' && <div className='flex-shrink-0 h-8 w-8 rounded-full bg-secondary flex items-center justify-center'><User className='h-4 w-4 text-secondary-foreground' aria-hidden='true' /></div>}
             </div>
           ))}
           <div ref={messagesEndRef} />
@@ -426,7 +426,7 @@ export default function Chat() {
         <div className='border-t px-6 py-3 bg-background/80 backdrop-blur-sm'>
           {attachedFiles.length > 0 && <div className='flex flex-wrap gap-2 mb-2'>{attachedFiles.map((f, i) => <div key={i} className='flex items-center gap-1.5 text-xs bg-muted rounded-lg px-2 py-1'>{f.preview ? <img src={f.preview} alt='' className='h-6 w-6 rounded object-cover' /> : <FileText className='h-3 w-3' />}<span className='max-w-[120px] truncate'>{f.name}</span><button onClick={() => removeFile(i)} className='text-muted-foreground hover:text-destructive ml-1'>x</button></div>)}</div>}
           <div className='flex items-end gap-2'>
-            {selectedModelType === 'text' && <div className='flex gap-1'><Button variant='ghost' size='sm' className='h-9 w-9 p-0' onClick={() => fileInputRef.current?.click()}><Paperclip className='h-4 w-4' /></Button><Button variant='ghost' size='sm' className='h-9 w-9 p-0' onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.onchange = (e: any) => { Array.from<File>(e.target.files || []).forEach(file => { const reader = new FileReader(); reader.onload = () => setAttachedFiles(prev => [...prev, { name: file.name, type: file.type, file, preview: reader.result as string }]); reader.readAsDataURL(file); }); }; inp.click(); }}><ImageIcon className='h-4 w-4' /></Button></div>}
+            {selectedModelType === 'text' && <div className='flex gap-1'><Button variant='ghost' size='sm' className='h-9 w-9 p-0' onClick={() => fileInputRef.current?.click()} aria-label={t('chat.attachFile')}><Paperclip className='h-4 w-4' aria-hidden='true' /></Button><Button variant='ghost' size='sm' className='h-9 w-9 p-0' onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true; inp.onchange = (e: any) => { Array.from<File>(e.target.files || []).forEach(file => { const reader = new FileReader(); reader.onload = () => setAttachedFiles(prev => [...prev, { name: file.name, type: file.type, file, preview: reader.result as string }]); reader.readAsDataURL(file); }); }; inp.click(); }} aria-label={t('chat.attachImage')}><ImageIcon className='h-4 w-4' aria-hidden='true' /></Button></div>}
             <input ref={fileInputRef} type='file' multiple className='hidden' onChange={handleFileAttach} />
             <Textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={isReady ? placeholderText : t('chat.selectModelFirst')} className='flex-1 min-h-[40px] max-h-[200px] resize-none text-sm' disabled={isStreaming} />
             <Button size='sm' className='h-10 w-10 p-0' onClick={sendMessage} disabled={isStreaming || !isReady || (!input.trim() && attachedFiles.length === 0)}>{isStreaming ? <Loader2 className='h-4 w-4 animate-spin' /> : <Send className='h-4 w-4' />}</Button>

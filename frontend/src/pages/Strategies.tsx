@@ -8,6 +8,7 @@ import { useI18n } from '../i18n';
 import { toast } from '../stores/toast';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
+import { PageHeader, EmptyState } from '../components/shared';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Badge } from '../components/ui/badge';
@@ -17,7 +18,7 @@ import { Switch } from '../components/ui/switch';
 import { Textarea } from '../components/ui/textarea';
 import { Plus, Trash2, Pencil, Zap, GitBranch, X, Loader2, ArrowRight, Check, Search, ListChecks } from 'lucide-react';
 
-interface Rule { provider_id: number; model_id: number; priority: number; weight: number; is_active: boolean; }
+interface Rule { provider_id: number; model_id: number; model_name?: string; priority: number; weight: number; is_active: boolean; }
 
 export default function Strategies() {
   const { t } = useI18n();
@@ -187,50 +188,48 @@ export default function Strategies() {
 
   return (
     <div className='space-y-6'>
-      <div className='flex items-center justify-between'>
-        <div>
-          <h1 className='text-2xl font-bold tracking-tight'>{t('strategies.title')}</h1>
-          <p className='text-sm text-muted-foreground mt-1'>{t('strategies.routingRules')}</p>
-        </div>
-        <div className='flex gap-2'>
-          <Button variant='outline' onClick={openByModel} className='gap-2'><ListChecks className='h-4 w-4' />{t('strategies.createByModel')}</Button>
-          <Button onClick={openCreate} className='gap-2'><Plus className='h-4 w-4' />{t('strategies.createStrategy')}</Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t('strategies.title')}
+        description={t('strategies.routingRules')}
+        actions={
+          <>
+            <Button variant='outline' onClick={openByModel} className='gap-2'><ListChecks className='h-4 w-4' aria-hidden='true' />{t('strategies.createByModel')}</Button>
+            <Button onClick={openCreate} className='gap-2'><Plus className='h-4 w-4' aria-hidden='true' />{t('strategies.createStrategy')}</Button>
+          </>
+        }
+      />
 
       {strategies.length === 0 ? (
-        <Card className='border-dashed'>
-          <CardContent className='flex flex-col items-center justify-center py-16'>
-            <GitBranch className='h-12 w-12 text-muted-foreground/30 mb-4' />
-            <p className='text-lg font-medium text-muted-foreground'>{t('strategies.noRules')}</p>
-            <Button onClick={openCreate} variant='outline' className='gap-2 mt-4'><Plus className='h-4 w-4' />{t('strategies.createStrategy')}</Button>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<GitBranch />}
+          title={t('strategies.noRules')}
+          action={<Button onClick={openCreate} variant='outline' className='gap-2'><Plus className='h-4 w-4' aria-hidden='true' />{t('strategies.createStrategy')}</Button>}
+        />
       ) : (
         <div className='grid gap-4'>
           {strategies.map((s: any) => (
             <Card key={s.id} className='card-hover'>
               <CardContent className='p-5'>
-                <div className='flex items-start justify-between mb-4'>
-                  <div className='flex items-center gap-3'>
-                    <div className='flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10'>
-                      <GitBranch className='h-5 w-5 text-purple-400' />
+                <div className='flex items-start justify-between mb-4 gap-3'>
+                  <div className='flex items-center gap-3 min-w-0'>
+                    <div className='flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary/12'>
+                      <GitBranch className='h-5 w-5 text-primary' aria-hidden='true' />
                     </div>
-                    <div>
+                    <div className='min-w-0'>
                       <h3 className='font-semibold'>{s.name}</h3>
-                      {s.description && <p className='text-xs text-muted-foreground mt-0.5'>{s.description}</p>}
+                      {s.description && <p className='text-xs text-muted-foreground mt-0.5 truncate'>{s.description}</p>}
                     </div>
                   </div>
-                  <div className='flex items-center gap-2'>
+                  <div className='flex flex-wrap items-center justify-end gap-1.5'>
                     <Badge variant='outline'>{lbOptions.find(l => l.value === s.lb_strategy)?.label || s.lb_strategy}</Badge>
                     {s.lb_strategy === 'token_threshold' && s.rule_token_threshold > 0 && (
-                      <Badge variant='outline' className='bg-green-500/10 text-green-400 border-green-500/20'>
+                      <Badge variant='success'>
                         {t('strategies.tokenThreshold')}: {s.rule_token_threshold.toLocaleString()} / {tokenPeriodOptions.find(p => p.value === (s.rule_token_period || 'per_day'))?.label || s.rule_token_period}
                       </Badge>
                     )}
-                    <Badge variant='outline' className='bg-blue-500/10 text-blue-400 border-blue-500/20'>Key: {keyStrategyOptions.find(k => k.value === (s.key_strategy || 'round_robin'))?.label || s.key_strategy}</Badge>
+                    <Badge variant='info'>Key: {keyStrategyOptions.find(k => k.value === (s.key_strategy || 'round_robin'))?.label || s.key_strategy}</Badge>
                     {s.key_switch_mode && s.key_switch_mode !== 'none' && (
-                      <Badge variant='outline' className='bg-amber-500/10 text-amber-400 border-amber-500/20'>
+                      <Badge variant='warning'>
                         {s.key_switch_mode === 'rpm_threshold' ? 'RPM>' + s.key_rpm_threshold : s.key_count_threshold + t('strategies.countUnit')}
                       </Badge>
                     )}
@@ -247,30 +246,30 @@ export default function Strategies() {
                 {s.rules && s.rules.length > 0 && (
                   <div className='flex flex-wrap gap-2 mb-4'>
                     {s.rules.map((r: any, i: number) => (
-                      <div key={i} className='flex items-center gap-1.5 text-xs bg-muted/60 rounded-md px-2.5 py-1.5'>
+                      <div key={i} className='flex items-center gap-1.5 text-xs rounded-md border bg-muted/50 px-2.5 py-1.5'>
                         <span className='font-medium'>{getProviderName(r.provider_id)}</span>
-                        <ArrowRight className='h-3 w-3 text-muted-foreground' />
+                        <ArrowRight className='h-3 w-3 text-muted-foreground' aria-hidden='true' />
                         <span className='text-muted-foreground'>{r.model_name || ('Model #' + r.model_id)}</span>
-                        <Badge variant='outline' className='ml-1 text-[10px] px-1 py-0'>P{r.priority}</Badge>
+                        <Badge variant='outline' className='ml-1 px-1 py-0 text-[10px]'>P{r.priority}</Badge>
                       </div>
                     ))}
                   </div>
                 )}
 
-                <div className='flex gap-2 pt-2 border-t border-border'>
-                  <Button variant='ghost' size='sm' className='gap-1.5' onClick={() => openEdit(s)}><Pencil className='h-3.5 w-3.5' />{t('common.edit')}</Button>
+                <div className='flex flex-wrap items-center gap-2 pt-3 border-t border-border'>
+                  <Button variant='ghost' size='sm' className='gap-1.5' onClick={() => openEdit(s)}><Pencil className='h-3.5 w-3.5' aria-hidden='true' />{t('common.edit')}</Button>
                   <Button variant='ghost' size='sm' className='gap-1.5' onClick={() => testMut.mutate(s.id)} disabled={testingId === s.id}>
-                    {testingId === s.id ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Zap className='h-3.5 w-3.5' />}{t('common.test')}
+                    {testingId === s.id ? <Loader2 className='h-3.5 w-3.5 animate-spin' aria-hidden='true' /> : <Zap className='h-3.5 w-3.5' aria-hidden='true' />}{t('common.test')}
                   </Button>
                   <div className='flex items-center gap-1.5 ml-1'>
-                    <Switch checked={s.is_active} onCheckedChange={(v) => toggleActive.mutate({ id: s.id, is_active: v })} />
+                    <Switch checked={s.is_active} onCheckedChange={(v) => toggleActive.mutate({ id: s.id, is_active: v })} aria-label={t('common.enabled')} />
                     <span className='text-xs text-muted-foreground'>{s.is_active ? t('common.enabled') : t('common.disabled')}</span>
                   </div>
                   <Button variant='ghost' size='sm' className='gap-1.5 text-destructive hover:text-destructive' onClick={() => deleteMut.mutate(s.id)}>
-                    <Trash2 className='h-3.5 w-3.5' />{t('common.delete')}
+                    <Trash2 className='h-3.5 w-3.5' aria-hidden='true' />{t('common.delete')}
                   </Button>
                   {testResults[s.id] && (
-                    <span className={'text-xs ml-auto self-center ' + (testResults[s.id].success ? 'text-green-400' : 'text-red-400')}>
+                    <span className={'ml-auto self-center text-xs font-medium ' + (testResults[s.id].success ? 'text-success' : 'text-destructive')}>
                       {testResults[s.id].message}
                     </span>
                   )}

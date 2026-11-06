@@ -15,10 +15,12 @@ from app.routers import providers, api_keys, models, strategies, logs, dashboard
 from app.routers.settings import router as settings_router, _get_settings
 from app.routers import providers, api_keys, models, strategies, logs, dashboard, proxy, icons, backup, conversations, service
 from app.routers import online_providers
+from app.routers import free_models
 from app.routers import client_keys
 from app.routers import oauth_login
 from app.routers import oauth_flow
 from app.routers import cli_import
+from app.routers import cloud_meta
 from app.version import get_version_info
 
 
@@ -75,11 +77,13 @@ app.add_middleware(DynamicCORSMiddleware)
 
 # Management APIs
 app.include_router(online_providers.router)
+app.include_router(free_models.router)
 app.include_router(client_keys.router)
 app.include_router(client_keys.endpoints_router)
 app.include_router(oauth_login.router)
 app.include_router(oauth_flow.router)
 app.include_router(cli_import.router)
+app.include_router(cloud_meta.router)
 app.include_router(providers.router)
 app.include_router(proxy.alias_router)
 app.include_router(api_keys.router)

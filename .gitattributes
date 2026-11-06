@@ -2,3 +2,13 @@
 # bash fails with '\r: command not found' on Linux/macOS.
 *.sh text eol=lf
 docker/nginx.conf text eol=lf
+
+# Batch files must use CRLF: cmd.exe label scanning (call/goto) fails on LF-only files
+# with "The system cannot find the batch label specified".
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Icon / image binaries must never be line-converted
+*.png binary
+*.ico binary
+*.icns binary

@@ -13,7 +13,10 @@
     "startServiceDesc": "后端服务未运行，请在终端执行以下命令启动：",
     "startServiceHint": "启动后页面将自动检测服务状态。",
     "endpoints": "端点和鉴权设置",
-    "forwarding": "路由转发设置"
+    "forwarding": "路由转发设置",
+    "collapse": "折叠侧栏",
+    "expand": "展开侧栏",
+    "closeMenu": "关闭菜单"
   },
   "settings": {
     "appearance": "外观设置",
@@ -177,7 +180,13 @@
     "total": "总计",
     "page": "页",
     "of": "共",
-    "items": "条"
+    "items": "条",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "themeSystem": "跟随系统",
+    "language": "语言",
+    "dangerZone": "危险操作"
   },
   "providers": {
     "title": "上游平台",
@@ -400,7 +409,26 @@
     "cliOpencodeNote": "OpenCode 通过本机 opencode serve（建议 --port 4096，如 http://127.0.0.1:4096）通信：先启动服务端，再填写服务器地址与服务端密码（免费模型可留空）",
     "cliOpencodePassword": "服务端密码（若服务端启用鉴权才需填写，可留空）",
     "cliTokenPlaceholderTrae": "Cloud-IDE-JWT（登录 solo.trae.ai 后从请求头抓取，约 14 天有效）",
-    "cliTokenPlaceholderQ": "access token（可留空：仅导入刷新凭据，转发时自动换取）"
+    "cliTokenPlaceholderZcode": "ZCode Coding Plan JWT（推荐用上方「浏览器授权登录」获取）",
+    "cliZcodeNote": "推荐「检测本机凭据」自动解密官方客户端令牌导入（计划配额绑定在该令牌身份上）；浏览器授权/粘贴 JWT 备用",
+    "cliTokenPlaceholderQ": "access token（可留空：仅导入刷新凭据，转发时自动换取）",
+    "freeModels": "免费模型合集",
+    "freeModelsTitle": "免费模型合集",
+    "freeModelsSubtitle": "来自公共免费网关的匿名免费渠道，无需注册与 API Key；点击「加入」即可添加到平台管理",
+    "freeNoKey": "无需密钥",
+    "freeJoin": "加入",
+    "freeJoined": "已加入",
+    "freeJoinDone": "已加入平台管理",
+    "freeResynced": "平台已存在，已同步免费模型",
+    "freeJoinFailed": "加入失败",
+    "freeChannelEmpty": "暂无可用渠道，请点击刷新重试",
+    "freeRefresh": "刷新",
+    "freeModelCount": "个免费模型",
+    "freeNeedGateway": "需本地网关",
+    "freeGatewayHint": "此渠道上游校验客户端指纹（Python 直连会被 429 拒绝），需经本地 opencode2api 网关接入。启动网关后填写其 OpenAI 兼容地址（参考 github.com/jasonxu114514/opencode2api）",
+    "freeGatewayUrl": "网关地址",
+    "freeGatewayKey": "网关密钥（可选）",
+    "freeConfirmJoin": "确认加入"
   },
   "logs": {
     "title": "请求日志",
@@ -460,7 +488,12 @@
     "rulesCount": "条规则",
     "ms": "ms",
     "clearToday": "清空当日统计",
-    "clearTodayDesc": "清除今日所有请求日志"
+    "clearTodayDesc": "清除今日所有请求日志",
+    "announcements": "软件公告",
+    "noAnnouncements": "暂无公告",
+    "sponsorSlots": "赞助商席位",
+    "sponsorEmpty": "虚位以待",
+    "sponsorVisit": "访问官网"
   },
   "chat": {
     "title": "AI 对话",

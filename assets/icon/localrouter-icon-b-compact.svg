@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- LocalRouter icon · Variant B compact (16-32px) -->
+  <defs>
+    <linearGradient id="bBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1A3A66"/>
+      <stop offset="0.55" stop-color="#10233F"/>
+      <stop offset="1" stop-color="#0A1526"/>
+    </linearGradient>
+    <radialGradient id="bGlow" cx="0.5" cy="0.5" r="0.62">
+      <stop offset="0" stop-color="#27C0F5" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#27C0F5" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="232" fill="url(#bBg)"/>
+  <rect width="1024" height="1024" rx="232" fill="url(#bGlow)"/>
+  <circle cx="512" cy="512" r="118" fill="#2FC4F7" fill-opacity="0.14"/>
+  <rect x="6" y="6" width="1012" height="1012" rx="226" fill="none" stroke="#FFFFFF" stroke-opacity="0.09" stroke-width="6"/>
+  <g transform="translate(512 512) scale(1.24) translate(-512 -512)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M572 512 C676 512 646 336 806 336" stroke="#7FD9FB" stroke-opacity="0.9" stroke-width="54"/>
+    <path d="M572 512 C676 512 646 688 806 688" stroke="#7FD9FB" stroke-opacity="0.9" stroke-width="54"/>
+    <path d="M780 290 L830 336 L780 382" stroke="#7FD9FB" stroke-opacity="0.9" stroke-width="54"/>
+    <path d="M780 642 L830 688 L780 734" stroke="#7FD9FB" stroke-opacity="0.9" stroke-width="54"/>
+    <path d="M196 512 H836" stroke="#FFFFFF" stroke-width="58"/>
+    <path d="M784 460 L838 512 L784 564" stroke="#FFFFFF" stroke-width="58"/>
+    <circle cx="512" cy="512" r="62" fill="#FFFFFF"/>
+  </g>
+</svg>

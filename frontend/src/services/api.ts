@@ -9,6 +9,11 @@ const api = axios.create({
 export const getHotProviders = () => api.get('/api/providers/hot-providers');
 export const getOnlineProviders = () => api.get('/api/providers/online-providers');
 export const refreshOnlineProviders = () => api.post('/api/providers/online-providers/refresh');
+export const getFreeModels = (force = false) => api.get('/api/providers/free-models', { params: force ? { force: true } : undefined });
+export const joinFreeChannel = (channelId: string, extra?: { gateway_base_url?: string; gateway_key?: string }) =>
+  api.post('/api/providers/free-models/join', { channel_id: channelId, ...(extra || {}) });
+// Cloud meta: software announcements & sponsor seats (fetched by backend from cloud auth server)
+export const getCloudMeta = (force = false) => api.get('/api/cloud/meta', { params: force ? { force: true } : undefined });
 export const getClientKeys = () => api.get('/api/client-keys');
 export const createClientKey = (data: any) => api.post('/api/client-keys', data);
 export const updateClientKey = (id: number, data: any) => api.patch('/api/client-keys/' + id, data);

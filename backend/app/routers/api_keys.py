@@ -262,9 +262,11 @@ async def _test_single_key(key: ApiKey, provider: Provider, db: AsyncSession) ->
 
         if provider.protocol == "openai":
             async with httpx.AsyncClient(timeout=15) as client:
+                # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
+                headers = {} if str(provider.auth_type or "") == "none" else {"Authorization": f"Bearer {real_key}"}
                 resp = await client.get(
                     f"{provider.base_url.rstrip('/')}/models",
-                    headers={"Authorization": f"Bearer {real_key}"},
+                    headers=headers,
                 )
                 elapsed = int((time.monotonic() - start) * 1000)
                 if resp.status_code == 200:

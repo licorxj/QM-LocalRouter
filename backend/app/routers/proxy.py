@@ -671,21 +671,65 @@ async def alias_gemini_list_models(
     return await gemini_list_models(db)
 
 
+STRATEGY_GROUP_NAME = "策略组合"
+
+
+def _direct_prefix(provider: Provider) -> str:
+    """Prefix usable in the "平台/模型id" direct-call form.
+
+    The platform name is preferred (readable); fall back to the numeric id
+    when the name is empty, contains "/" (breaks partition-based dispatch)
+    or is all digits (dispatch resolves digit prefixes as provider ids).
+    """
+    name = provider.name or ""
+    if not name or "/" in name or name.isdigit():
+        return str(provider.id)
+    return name
+
+
 async def _models_impl(db: AsyncSession):
-    result = await db.execute(select(Strategy).where(Strategy.is_active == True))
-    strategies = result.scalars().all()
-    return {
-        "object": "list",
-        "data": [
-            {
-                "id": s.name,
+    """OpenAI-compatible model catalog grouped via `owned_by`:
+
+    - 平台分组: each active platform's active models, with the direct-call
+      id "平台/模型id" so the listed name can be used as the `model` field;
+    - 策略组合: active strategies, id = strategy name (original behavior).
+    """
+    data = []
+    now = int(time.time())
+
+    result = await db.execute(
+        select(Model).where(Model.is_active == True, Model.model_id != "").order_by(Model.id)
+    )
+    models_by_provider: dict[int, list] = {}
+    for m in result.scalars().all():
+        models_by_provider.setdefault(m.provider_id, []).append(m)
+
+    result = await db.execute(
+        select(Provider).where(Provider.is_active == True).order_by(Provider.id)
+    )
+    for p in result.scalars().all():
+        provider_models = models_by_provider.get(p.id)
+        if not provider_models:
+            continue
+        prefix = _direct_prefix(p)
+        for m in provider_models:
+            data.append({
+                "id": f"{prefix}/{m.model_id}",
                 "object": "model",
-                "created": int(s.created_at.timestamp()) if s.created_at else 0,
-                "owned_by": "router",
-            }
-            for s in strategies
-        ],
-    }
+                "created": now,
+                "owned_by": p.name or prefix,
+            })
+
+    result = await db.execute(select(Strategy).where(Strategy.is_active == True))
+    for s in result.scalars().all():
+        data.append({
+            "id": s.name,
+            "object": "model",
+            "created": int(s.created_at.timestamp()) if s.created_at else 0,
+            "owned_by": STRATEGY_GROUP_NAME,
+        })
+
+    return {"object": "list", "data": data}
 
 
 @router.get("/v1/models")
@@ -711,6 +755,46 @@ async def _resolve_model_from_provider(model_name: str, provider_id: int, db: As
     return model_obj
 
 
+async def _resolve_prefixed_media_model(model_name: str, model_types: list[str], db: AsyncSession):
+    """Resolve the "平台/模型id" direct form for media endpoints.
+
+    The model catalog lists platform models in this form, so media resolvers
+    must accept it before falling back to the bare-name search. Returns
+    (provider, model) or None when the name is not prefixed or nothing matches.
+    """
+    pid, sep, model_id = (model_name or "").partition("/")
+    if not sep or not model_id:
+        return None
+
+    provider = None
+    if pid.isdigit():
+        provider = await db.get(Provider, int(pid))
+    if provider is None:
+        result = await db.execute(select(Provider).where(Provider.name == pid))
+        provider = result.scalar_one_or_none()
+    if not provider or not provider.is_active:
+        return None
+
+    result = await db.execute(
+        select(Model).where(
+            Model.provider_id == provider.id, Model.model_id == model_id,
+            Model.model_type.in_(model_types), Model.is_active == True,
+        )
+    )
+    model_obj = result.scalar_one_or_none()
+    if not model_obj:
+        result = await db.execute(
+            select(Model).where(
+                Model.provider_id == provider.id, Model.display_name == model_id,
+                Model.model_type.in_(model_types), Model.is_active == True,
+            )
+        )
+        model_obj = result.scalar_one_or_none()
+    if not model_obj:
+        return None
+    return provider, model_obj
+
+
 async def _select_key_for_provider(provider_id: int, db: AsyncSession):
     """Select an API key for a provider (same cooldown/revive rules as Balancer)."""
     return await Balancer(db).select_key(provider_id)
@@ -730,6 +814,11 @@ async def _find_provider_and_model_for_image(model_name: str, provider_id: int |
         if not model_obj:
             raise HTTPException(404, detail=f"Model '{model_name}' not found for provider {provider.name}")
         return provider, model_obj
+
+    # Prefer the "平台/模型id" direct form, then search bare names
+    direct = await _resolve_prefixed_media_model(model_name, ["image"], db)
+    if direct:
+        return direct
 
     # Search across all providers for this image model
     result = await db.execute(
@@ -813,6 +902,10 @@ async def _find_provider_and_model_for_embedding(model_name: str, provider_id: i
             raise HTTPException(404, detail=f"Model '{model_name}' not found for provider {provider.name}")
         return provider, model_obj
 
+    direct = await _resolve_prefixed_media_model(model_name, ["embedding"], db)
+    if direct:
+        return direct
+
     result = await db.execute(
         select(Model).where(Model.model_id == model_name, Model.model_type == "embedding", Model.is_active == True)
     )
@@ -893,6 +986,10 @@ async def _find_provider_and_model_for_transcription(model_name: str, provider_i
             raise HTTPException(404, detail=f"Model '{model_name}' not found for provider {provider.name}")
         return provider, model_obj
 
+    direct = await _resolve_prefixed_media_model(model_name, ["tts", "audio"], db)
+    if direct:
+        return direct
+
     result = await db.execute(
         select(Model).where(Model.model_id == model_name, Model.model_type.in_(["tts", "audio"]), Model.is_active == True)
     )
@@ -967,6 +1064,10 @@ async def _find_provider_and_model_for_tts(model_name: str, provider_id: int | N
             raise HTTPException(404, detail=f"Model '{model_name}' not found for provider {provider.name}")
         return provider, model_obj
 
+    direct = await _resolve_prefixed_media_model(model_name, ["tts"], db)
+    if direct:
+        return direct
+
     result = await db.execute(
         select(Model).where(Model.model_id == model_name, Model.model_type == "tts", Model.is_active == True)
     )
@@ -1038,6 +1139,10 @@ async def _find_provider_and_model_for_video(model_name: str, provider_id: int |
         if not model_obj:
             raise HTTPException(404, detail=f"Model '{model_name}' not found for provider {provider.name}")
         return provider, model_obj
+
+    direct = await _resolve_prefixed_media_model(model_name, ["video"], db)
+    if direct:
+        return direct
 
     result = await db.execute(
         select(Model).where(Model.model_id == model_name, Model.model_type == "video", Model.is_active == True)

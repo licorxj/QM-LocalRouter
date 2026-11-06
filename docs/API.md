@@ -120,7 +120,14 @@ Legacy text completions. Converts to chat format internally.
 
     GET /v1/models
 
-Returns all active strategy names.
+Returns the model catalog grouped via the `owned_by` field:
+
+- **Platform groups** — each active platform's active models, with the
+  direct-call id `platform/model_id` (usable as the `model` field);
+- **策略组合 (strategy group)** — active strategies, id = strategy name.
+
+Alias: `GET /k/{client_key}/v1/models`. The Gemini-style list
+`GET /v1beta/models` returns the same catalog.
 
 ---
 
