@@ -86,3 +86,9 @@ config.json.*
 opencode2api.exe
 opencode.exe
 run/
+
+# v2.0.9 分发文件夹（本地整理用）
+/2.0.9/
+
+# 运行时网关配置（含密钥，不入库）
+/config.json
