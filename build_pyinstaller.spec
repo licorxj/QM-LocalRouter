@@ -75,6 +75,12 @@ _common = dict(
         "app.services.cline",
         "app.services.opencode",
         "app.services.workbuddy",
+        "app.services.zcode",
+        "app.services.zcode_system",
+        # fastapi 在函数体内动态 import python_multipart（backup /restore 等
+        # Form 接口），确保冻结包内一定可用
+        "python_multipart",
+        "multipart",
         # aiosqlite is imported by sqlalchemy's dialect registry through a
         # string at runtime, so static analysis never sees it.
         "aiosqlite",
