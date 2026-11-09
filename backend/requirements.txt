@@ -9,6 +9,8 @@ pydantic-settings==2.5.0
 httpx>=0.27.0,<1.0
 cryptography==43.0.0
 python-dotenv==1.0.1
+# Form/UploadFile 支持（backup /restore 等接口必需；缺失会导致打包版启动即崩）
+python-multipart==0.0.29
 # LiteLLM - LLM 路由转发内核
 litellm>=1.0.0
 # 桌面外壳（launcher_desktop.py，仅 Windows 冻结包使用；Linux/Docker 会自动跳过其 Win32 依赖）
