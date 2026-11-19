@@ -5,7 +5,6 @@ Failure classification lives in app.utils.key_health: a network blip or an
 upstream 5xx must never mark a key as invalid.
 """
 import time
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.api_key import ApiKey
@@ -70,56 +69,57 @@ async def check_key_health(db: AsyncSession, api_key: ApiKey, provider: Provider
             }
 
         if provider.protocol == "openai":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{provider.base_url.rstrip('/')}/models",
-                    headers={"Authorization": f"Bearer {real_key}"},
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
-                return {
-                    "success": False,
-                    "message": f"HTTP {resp.status_code}",
-                    "latency_ms": elapsed,
-                    "error_kind": classify_status_code(resp.status_code),
-                }
+            # OAuth key（如 Copilot）：先刷新短效 token 并合并平台必需指纹头
+            from app.services.oauth_providers import oauth_probe_headers
+            from app.utils import ssl_relax
+            probe_headers = await oauth_probe_headers(db, api_key, provider, {"Content-Type": "application/json"})
+            url = f"{provider.base_url.rstrip('/')}/models"
+            resp = await ssl_relax.request("GET", url, timeout=15, headers=probe_headers)
+            elapsed = int((time.monotonic() - start) * 1000)
+            if resp.status_code == 200:
+                return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
+            return {
+                "success": False,
+                "message": f"HTTP {resp.status_code}",
+                "latency_ms": elapsed,
+                "error_kind": classify_status_code(resp.status_code),
+            }
 
         elif provider.protocol == "claude":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{provider.base_url.rstrip('/')}/messages",
-                    headers={
-                        "x-api-key": real_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={"model": "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
-                return {
-                    "success": False,
-                    "message": f"HTTP {resp.status_code}",
-                    "latency_ms": elapsed,
-                    "error_kind": classify_status_code(resp.status_code),
-                }
+            from app.utils import ssl_relax
+            url = f"{provider.base_url.rstrip('/')}/messages"
+            resp = await ssl_relax.request(
+                "POST", url, timeout=15,
+                headers={
+                    "x-api-key": real_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={"model": "claude-3-haiku-20240307", "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]},
+            )
+            elapsed = int((time.monotonic() - start) * 1000)
+            if resp.status_code == 200:
+                return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
+            return {
+                "success": False,
+                "message": f"HTTP {resp.status_code}",
+                "latency_ms": elapsed,
+                "error_kind": classify_status_code(resp.status_code),
+            }
 
         elif provider.protocol == "gemini":
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{provider.base_url.rstrip('/')}/models?key={real_key}",
-                )
-                elapsed = int((time.monotonic() - start) * 1000)
-                if resp.status_code == 200:
-                    return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
-                return {
-                    "success": False,
-                    "message": f"HTTP {resp.status_code}",
-                    "latency_ms": elapsed,
-                    "error_kind": classify_status_code(resp.status_code),
-                }
+            from app.utils import ssl_relax
+            url = f"{provider.base_url.rstrip('/')}/models?key={real_key}"
+            resp = await ssl_relax.request("GET", url, timeout=15)
+            elapsed = int((time.monotonic() - start) * 1000)
+            if resp.status_code == 200:
+                return {"success": True, "message": "OK", "latency_ms": elapsed, "error_kind": ""}
+            return {
+                "success": False,
+                "message": f"HTTP {resp.status_code}",
+                "latency_ms": elapsed,
+                "error_kind": classify_status_code(resp.status_code),
+            }
 
         return {"success": False, "message": "Unsupported protocol", "error_kind": KIND_OTHER}
 

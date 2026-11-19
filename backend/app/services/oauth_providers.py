@@ -89,6 +89,17 @@ DEFAULT_PROFILES = {
             "api_base": "https://api.githubcopilot.com",
             "auth": "bearer",
             "protocols": ["openai", "custom"],
+            # api.githubcopilot.com 强制要求“编辑器指纹头”，缺失会 401/403。
+            # 值与 litellm / copilot-api 官方实现对齐。
+            "extra_headers": {
+                "copilot-integration-id": "vscode-chat",
+                "editor-version": "vscode/1.95.0",
+                "editor-plugin-version": "copilot-chat/0.26.7",
+                "user-agent": "GitHubCopilotChat/0.26.7",
+                "openai-intent": "conversation-panel",
+                "x-github-api-version": "2025-04-01",
+                "x-vscode-user-agent-library-version": "electron-fetch",
+            },
         },
         "match_keywords": ["copilot", "api.githubcopilot.com"],
     },
@@ -598,3 +609,59 @@ async def ensure_fresh_token(db: AsyncSession, api_key: ApiKey, force: bool = Fa
     except Exception as e:
         api_key.last_error = f"OAuth refresh failed: {str(e)[:200]}"
         await db.commit()
+
+
+async def oauth_probe_headers(
+    db: AsyncSession | None,
+    api_key: ApiKey | None,
+    provider,
+    base_headers: dict | None = None,
+) -> dict:
+    """Build upstream request headers for /models probing, health checks and key tests.
+
+    For OAuth keys this (a) refreshes short-lived tokens (e.g. Copilot's ~30min
+    token) when ``db`` is provided, and (b) always merges the profile's
+    upstream.extra_headers (e.g. Copilot's mandatory editor fingerprint headers).
+    Pass ``db=None`` in pure-HTTP concurrent probes that must not touch the DB.
+    auth_type="none" upstreams never get a forged Authorization header.
+    """
+    headers = dict(base_headers or {})
+
+    def _decrypted_token():
+        if not api_key:
+            return ""
+        try:
+            # 不能直接写 api_key.key：ApiKey 的凭据列名由 ORM 映射决定
+            # （见 api_keys.py 解密写法）。动态找到 fernet 密文列，兼容 ORM 与轻量对象。
+            cred = getattr(api_key, "key", None)
+            if cred is None:
+                from app.models.api_key import ApiKey as _ApiKey
+                for col in _ApiKey.__table__.columns:
+                    val = getattr(api_key, col.key, None)
+                    if isinstance(val, str) and val.startswith("gAAAAA"):
+                        cred = val
+                        break
+            if cred is None:
+                return ""
+            return decrypt_value(cred)
+        except Exception:
+            pass
+
+    if api_key is not None and getattr(api_key, "oauth_profile", None):
+        if db is not None:
+            try:
+                await ensure_fresh_token(db, api_key)
+            except Exception:
+                pass
+        token = _decrypted_token()
+        profile = get_profile(api_key.oauth_profile) or {}
+        upstream = profile.get("upstream") or {}
+        if not upstream:
+            upstream = local_cli.CLI_PLATFORMS.get(api_key.oauth_profile, {}).get("upstream") or {}
+        for k, v in (upstream.get("extra_headers") or {}).items():
+            headers[k] = v
+    else:
+        token = _decrypted_token()
+    if str(getattr(provider, "auth_type", "") or "") != "none" and token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers

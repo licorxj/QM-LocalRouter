@@ -130,6 +130,10 @@ class ModelCreate(_Base):
     is_active: bool = True
     is_multimodal: bool = False
     model_type: str = Field(default="text", pattern=r"^(text|image|video|tts|embedding|audio)$")
+    model_types: str = ""
+    supports_vision: bool = False
+    supports_search: bool = False
+    supports_tools: bool = False
     context_window: Optional[int] = None
     temperature: Optional[float] = None
     price_input: Optional[float] = None
@@ -142,6 +146,10 @@ class ModelUpdate(_Base):
     is_active: Optional[bool] = None
     is_multimodal: Optional[bool] = None
     model_type: Optional[str] = None
+    model_types: Optional[str] = None
+    supports_vision: Optional[bool] = None
+    supports_search: Optional[bool] = None
+    supports_tools: Optional[bool] = None
     context_window: Optional[int] = None
     temperature: Optional[float] = None
     price_input: Optional[float] = None
@@ -158,6 +166,10 @@ class ModelOut(_Base):
     is_active: bool
     is_multimodal: bool = False
     model_type: str = "text"
+    model_types: str = ""
+    supports_vision: bool = False
+    supports_search: bool = False
+    supports_tools: bool = False
     context_window: Optional[int] = None
     temperature: Optional[float] = None
     price_input: Optional[float] = None
@@ -175,6 +187,10 @@ class FetchModelItem(_Base):
     display_name: str
     is_multimodal: bool = False
     model_type: str = "text"
+    model_types: str = ""
+    supports_vision: bool = False
+    supports_search: bool = False
+    supports_tools: bool = False
     context_window: Optional[int] = None
     temperature: Optional[float] = None
     price_input: Optional[float] = None
@@ -199,6 +215,8 @@ class StrategyRuleCreate(_Base):
 
 
 class StrategyRuleUpdate(_Base):
+    provider_id: Optional[int] = None
+    model_id: Optional[int] = None
     priority: Optional[int] = None
     weight: Optional[int] = None
     is_active: Optional[bool] = None
@@ -283,6 +301,7 @@ class StrategyTestResult(_Base):
 # -- Logs --
 class LogOut(_Base):
     id: int
+    client_ip: str = ""
     strategy_id: Optional[int]
     provider_id: Optional[int]
     api_key_id: Optional[int]

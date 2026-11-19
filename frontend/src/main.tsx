@@ -12,7 +12,11 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
-      staleTime: 5_000,
+      // 切换界面后 30s 内的缓存视为新鲜，直接复用，不再重复请求后端。
+      // 原 5s 过短：离开页面几秒再切回，整页 3-5 个查询全部重发，切页卡顿。
+      staleTime: 30_000,
+      // 卸载页面的缓存保留 5 分钟，切回来先渲染缓存再后台按需刷新。
+      gcTime: 5 * 60_000,
     },
   },
 });

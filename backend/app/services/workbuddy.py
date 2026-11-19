@@ -22,6 +22,8 @@ import uuid
 
 import httpx
 
+from app.utils import ssl_relax
+
 # ------------------------------------------------------------------ 区域配置
 
 REGIONS = {
@@ -158,8 +160,9 @@ async def call(
     url = cfg["endpoint"].rstrip("/") + path
     merged = {**_headers(region, credential, anonymous), **(headers or {})}
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            resp = await client.request(method, url, json=body, headers=merged)
+        # 共享 client（复用连接，省去每请求的证书库加载），timeout 按请求覆盖
+        client = ssl_relax.get_client(url)
+        resp = await client.request(method, url, json=body, headers=merged, timeout=timeout)
     except httpx.TimeoutException:
         raise WorkBuddyError(504, "Upstream timeout", "upstream_timeout")
     except httpx.HTTPError:
@@ -211,6 +214,7 @@ async def start_login(region: str = "cn") -> dict:
 async def poll_login(region: str, state: str) -> dict:
     """第二步：轮询授权结果。返回 {"status": "pending"|"complete", ...}。"""
     region = normalize_region(region)
+    cfg = _config(region)
     suffix = "?state=" + urllib.parse.quote(state or "")
 
     token = await call(region, "/v2/plugin/auth/token" + suffix, anonymous=True,
@@ -240,6 +244,8 @@ async def poll_login(region: str, state: str) -> dict:
         "enterprise_id": account.get("enterpriseId") or "",
         "department": account.get("departmentFullName") or "",
         "account_type": account.get("type", ""),
+        # 会话域名（积分接口按会话域名路由，EchoBird base() 逻辑）
+        "domain": cfg["endpoint"].split("//", 1)[-1],
     })
     return {"status": "complete", "region": region, "credential": credential, "account": account}
 
@@ -462,40 +468,41 @@ async def stream_chunks(
     }
     url = _config(region)["endpoint"].rstrip("/") + "/v2/chat/completions"
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            async with client.stream("POST", url, headers={**_headers(region, credential), **extra}, json=body) as resp:
-                if resp.status_code >= 400:
-                    raw = await resp.aread()
-                    status = resp.status_code if resp.status_code < 500 else 502
-                    raise WorkBuddyError(status, _error_text(raw, resp.status_code), "upstream_error")
-                if "text/event-stream" in (resp.headers.get("content-type") or ""):
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        payload = line[5:].strip()
-                        if not payload:
-                            continue
-                        if payload == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(payload)
-                        except ValueError:
-                            raise WorkBuddyError(502, "Malformed SSE JSON", "invalid_sse_json")
-                        yield _check_chunk(chunk)
-                    return
-                # 非 SSE（错误或单包 JSON）
+        client = ssl_relax.get_client(url)
+        async with client.stream("POST", url, headers={**_headers(region, credential), **extra}, json=body,
+                                 timeout=timeout) as resp:
+            if resp.status_code >= 400:
                 raw = await resp.aread()
-                try:
-                    chunk = json.loads(raw)
-                except ValueError:
-                    raise WorkBuddyError(502, "Upstream returned non-JSON", "invalid_upstream")
-                chunk = _check_chunk(chunk)
-                for choice in chunk.get("choices", []):
-                    choice["delta"] = choice.pop("message", {})
-                    for index, tool in enumerate(choice["delta"].get("tool_calls") or []):
-                        tool["index"] = index
-                chunk["object"] = "chat.completion.chunk"
-                yield chunk
+                status = resp.status_code if resp.status_code < 500 else 502
+                raise WorkBuddyError(status, _error_text(raw, resp.status_code), "upstream_error")
+            if "text/event-stream" in (resp.headers.get("content-type") or ""):
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if not payload:
+                        continue
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except ValueError:
+                        raise WorkBuddyError(502, "Malformed SSE JSON", "invalid_sse_json")
+                    yield _check_chunk(chunk)
+                return
+            # 非 SSE（错误或单包 JSON）
+            raw = await resp.aread()
+            try:
+                chunk = json.loads(raw)
+            except ValueError:
+                raise WorkBuddyError(502, "Upstream returned non-JSON", "invalid_upstream")
+            chunk = _check_chunk(chunk)
+            for choice in chunk.get("choices", []):
+                choice["delta"] = choice.pop("message", {})
+                for index, tool in enumerate(choice["delta"].get("tool_calls") or []):
+                    tool["index"] = index
+            chunk["object"] = "chat.completion.chunk"
+            yield chunk
     except httpx.TimeoutException:
         raise WorkBuddyError(504, "Upstream stream timeout", "stream_timeout")
     except httpx.HTTPError:

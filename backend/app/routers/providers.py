@@ -12,20 +12,33 @@ from app.services.provider_registry import (
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
+# 静态 JSON 目录常驻内存，按 mtime 失效，避免每次切页同步 open+json.load 阻塞事件循环。
+_static_cache: dict[str, tuple[float, object]] = {}
+
+
+def _load_static_json(filename: str) -> object:
+    import time as _time
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", filename)
+    try:
+        mtime = os.stat(json_path).st_mtime
+    except OSError:
+        return []
+    cached = _static_cache.get(filename)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    try:
+        with open(json_path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return [] if cached is None else cached[1]
+    _static_cache[filename] = (mtime, data)
+    return data
+
 
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Provider).order_by(Provider.id))
     return result.scalars().all()
-
-
-@router.get("/hot-providers")
-async def get_hot_providers():
-    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "hot_providers.json")
-    if not os.path.exists(json_path):
-        return []
-    with open(json_path, "r", encoding="utf-8-sig") as f:
-        return json.load(f)
 
 
 @router.post("", response_model=ProviderOut, status_code=201)
@@ -132,8 +145,4 @@ async def get_provider_details(provider_id: str):
 
 @router.get("/hot-providers")
 async def get_hot_providers():
-    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "hot_providers.json")
-    if not os.path.exists(json_path):
-        return []
-    with open(json_path, "r", encoding="utf-8-sig") as f:
-        return json.load(f)
+    return _load_static_json("hot_providers.json")

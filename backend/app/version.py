@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from app.config import BASE_DIR
@@ -75,7 +76,19 @@ def _git_describe() -> dict | None:
     return {"git_tag": tag, "git_commit": commit, "git_dirty": dirty}
 
 
+# 源码模式下 get_version_info() 会同步 spawn `git describe` 子进程
+# （Windows 上 50-100ms，直接阻塞事件循环），而前端会频繁调 /api/health、
+# /api/version。缓存 60s：UI 展示无感知，进程内最多一次子进程开销。
+_version_cache: dict | None = None
+_version_cached_at: float = 0.0
+
+
 def get_version_info() -> dict:
+    global _version_cache, _version_cached_at
+
+    if _version_cache is not None and time.monotonic() - _version_cached_at < 60:
+        return dict(_version_cache)
+
     info = {
         "version": APP_VERSION,
         "git_tag": None,
@@ -105,4 +118,6 @@ def get_version_info() -> dict:
         stripped = info["git_tag"].lstrip("v")
         if stripped:
             info["version"] = stripped
-    return info
+    _version_cache = info
+    _version_cached_at = time.monotonic()
+    return dict(info)

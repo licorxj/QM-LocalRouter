@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Loader2, Menu, Moon, Play, Sun } from "lucide-react";
+import { Link2, Loader2, Menu, Moon, Play, Sun } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useTheme } from "../../providers/theme";
 import { useNavItems } from "./nav";
@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { StatusDot } from "../shared";
+import AccessAddressDialog from "./AccessAddressDialog";
 
 function ThemeToggle() {
   const { resolved, setTheme } = useTheme();
@@ -119,6 +120,8 @@ export default function Topbar() {
   const location = useLocation();
   const navItems = useNavItems();
   const { setMobileOpen } = useShell();
+  const { t } = useI18n();
+  const [addressOpen, setAddressOpen] = useState(false);
 
   const current = navItems.find((n) =>
     n.to === "/" ? location.pathname === "/" : location.pathname.startsWith(n.to)
@@ -139,12 +142,23 @@ export default function Topbar() {
         {current?.label ?? ""}
       </h2>
       <div className="ml-auto flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 gap-1.5 px-2 text-xs"
+          aria-label={t("settings.endpointAddress")}
+          onClick={() => setAddressOpen(true)}
+        >
+          <Link2 className="h-4 w-4" aria-hidden="true" />
+          <span className="hidden sm:inline">{t("settings.endpointAddress")}</span>
+        </Button>
         <div className="mr-1">
           <HealthPill />
         </div>
         <LocaleToggle />
         <ThemeToggle />
       </div>
+      <AccessAddressDialog open={addressOpen} onOpenChange={setAddressOpen} />
     </header>
   );
 }

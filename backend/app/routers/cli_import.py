@@ -125,7 +125,13 @@ async def cli_import(data: CliImport, db: AsyncSession = Depends(get_db)):
         await db.commit()
 
     try:
-        key = await local_cli.store_cli_key(db, provider_id, data.platform, credential)
+        # zcode 支持多账号：按 email / token 指纹生成区分键，实现同账号替换、不同账号共存
+        account_key = None
+        if data.platform == "zcode":
+            account_key = local_cli.zcode_account_key(
+                credential, credential.get("access_token", ""))
+        key = await local_cli.store_cli_key(db, provider_id, data.platform, credential,
+                                            account_key=account_key)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

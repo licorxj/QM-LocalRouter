@@ -6,6 +6,7 @@
 |-------------|-----------------|-------------------|
 | Python | 3.10 | 3.12 |
 | Node.js | 18 | 20 LTS |
+| Node.js (ZCode local check-in script) | 22 | 22 LTS |
 | npm | 9 | 10 |
 | pip | 21 | 24 |
 
@@ -21,7 +22,7 @@ Source: `backend/requirements.txt`
 | **uvicorn[standard]** | 0.30.0 | ASGI server for running FastAPI |
 | **sqlalchemy[asyncio]** | 2.0.35 | Async ORM for database operations |
 | **aiosqlite** | 0.20.0 | Async SQLite driver |
-| **alembic** | 1.13.2 | Database migration support (for future use) |
+| **alembic** | 1.13.2 | Database schema migrations (active; config in `backend/alembic.ini`, versions in `backend/alembic/versions/`) |
 | **pydantic** | 2.9.0 | Data validation and settings management |
 | **pydantic-settings** | 2.5.0 | Environment variable / .env file loading |
 | **httpx** | 0.27.0 | Async HTTP client for upstream API forwarding |
@@ -92,6 +93,7 @@ LocalRouter
 │   ├── fastapi ─── uvicorn ─── httptools
 │   │   └── pydantic ─── pydantic-settings ─── python-dotenv
 │   ├── sqlalchemy[asyncio] ─── aiosqlite
+│   │   └── alembic ─── schema migrations (sync sqlite engine, same app.db)
 │   ├── httpx ─── HTTP forwarding
 │   └── cryptography ─── Fernet encryption
 │
@@ -107,3 +109,19 @@ LocalRouter
 └── Database
     └── SQLite (zero-config, file-based)
 ```
+
+---
+
+## ZCode Local Check-in Script (optional)
+
+`backend/data/zcode-autoclaim/claim-now.mjs` is a one-shot check-in helper for the locally
+installed ZCode desktop client. Backend service `backend/app/services/zcode_claim.py`
+detects the installation and runs the script through `POST /api/accounts/zcode/claim`.
+
+- **Node.js >= 22 is required** for this script (built-in `WebSocket` / `fetch`, zero npm deps).
+  Node 18/20 is sufficient for the frontend build but NOT for this script.
+- Requires the ZCode desktop client to be installed. Set the `ZCODE_EXE` environment variable
+  to override the executable path when installed in a non-standard location.
+- Requires ZCode launched with `--remote-debugging-port=9222` (see `start-debug.cmd` in the
+  script directory); the script drives the client's native UI via CDP and sends no HTTP requests itself.
+- Bundled assets: `claim-now.mjs`, `README.md`, `start-debug.cmd`, `start-isolated.cmd`.

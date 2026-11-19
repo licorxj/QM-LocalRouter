@@ -44,8 +44,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const t = (key: string, vars?: Record<string, string | number>): string => {
     const raw = getNestedValue(locales[locale], key);
     if (!vars) return raw;
-    // Interpolate `{{name}}` placeholders; unknown vars render as empty.
-    return raw.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, name) =>
+    // Interpolate `{{name}}` and `{name}` placeholders; unknown vars render as empty.
+    return raw.replace(/\{\{?\s*(\w+)\s*\}?\}/g, (_, name) =>
       vars[name] !== undefined ? String(vars[name]) : ""
     );
   };

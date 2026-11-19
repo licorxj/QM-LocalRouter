@@ -67,6 +67,8 @@
 | 平台管理（Key / 模型 / $0 免费模型） | AI 对话 |
 |:---:|:---:|
 | ![平台管理](docs/images/providers.png) | ![AI 对话](docs/images/chat.png) |
+| **路由策略** | **同步平台模型（74 个模型批量导入）** |
+| ![路由策略](docs/images/strategies.png) | ![同步平台模型](docs/images/sync-models.png) |
 | **请求日志** | **浅色主题** |
 | ![请求日志](docs/images/logs.png) | ![浅色主题](docs/images/dashboard-light.png) |
 

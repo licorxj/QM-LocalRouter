@@ -223,12 +223,23 @@ Routing strategies define how requests are forwarded to upstream providers.
 - **Key Switch Trigger** 鈥?None / RPM threshold / Count threshold
 
 **Advanced:**
-- **Timeout** 鈥?Request timeout in seconds (default 120)
-- **Retry Count** 鈥?Number of retries on failure (default 2)
-- **Enable** 鈥?Toggle strategy on/off
+- **Timeout** — Request timeout in seconds (default 120)
+- **Retry Count** — Retries on failure (default 2); each retry advances to the next rule per the model balancing strategy
+- **Enable** — Toggle strategy on/off
 
 4. **Add Routing Rules**: Select provider + model, set priority and weight, click "Add"
 5. Click **"Create"**
+
+### Layered Strategy Model
+
+Composite routing uses two independent layers:
+
+1. **Model balancing (composite layer, i.e. "Load Balancing")**: decides which model among the rules to call.
+   - Failover / Priority: try rules by priority (P0→P1→…); on failure, advance to the next rule.
+   - Each retry consumes one budget slot; total attempts = `retry_count + 1`.
+2. **Key strategy (provider layer)**: when calling a specific model, follow **that model's own provider** Key strategy and switch trigger (set under "Providers → Multi-Key Policy"); the composite strategy's Key settings do not apply to strategy routing.
+
+> In short: the composite decides "which model to call and which to fail over to"; the provider decides "which key this model uses and how to switch keys".
 
 ### Load Balancing Strategies
 
@@ -237,16 +248,18 @@ Routing strategies define how requests are forwarded to upstream providers.
 | **Round Robin** | Use rules in order, cycling through sequentially |
 | **Weighted** | Distribute by weight ratio (e.g., 3:1 = 75%:25%) |
 | **Random** | Randomly select a rule each time |
-| **Failover** | Use highest priority; switch to next on failure |
+| **Failover** | Use by priority; on failure switch to the next rule |
 | **Priority** | Always use the highest priority rule |
 
-### Key Strategies
+### Key Strategies (provider level)
+
+> Configured under "Providers → Multi-Key Policy", applied independently per provider.
 
 | Strategy | Description |
 |----------|-------------|
 | **Round Robin** | Cycle through keys sequentially |
 | **Random** | Randomly select a key |
-| **Failover** | Use the first key; switch to next on failure |
+| **Failover** | Ranked by cooldown: prefer uncooled keys; cooling ones ranked by unlock time; pick earliest-unlock if all cooling |
 
 ### Key Switch Triggers
 

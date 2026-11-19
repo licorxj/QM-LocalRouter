@@ -104,7 +104,9 @@ const MediaPreview: React.FC<{ url: string }> = ({ url }) => {
 
 const ReactMarkdownAny = ReactMarkdown as any;
 
-const MarkdownRenderer: React.FC<{ content: string; className?: string }> = ({ content, className }) => {
+// memo 化：流式输出时历史消息 content 不变，跳过其 Markdown/GFM 解析，
+// 只有当前正在输出的消息才重新渲染（配合 rAF 节流，主线程开销大幅下降）。
+const MarkdownRenderer: React.FC<{ content: string; className?: string }> = React.memo(({ content, className }) => {
   const { t } = useI18n();
   const standaloneMedia = React.useMemo(() => {
     const markdownImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
@@ -160,7 +162,7 @@ const MarkdownRenderer: React.FC<{ content: string; className?: string }> = ({ c
       )}
     </div>
   );
-};
+});
 
 export default function Chat() {
   const { t } = useI18n();
@@ -190,7 +192,7 @@ export default function Chat() {
 
   const loadConversations = useCallback(async () => { try { const res = await getConversations(); setConvList(res.data || []); } catch (_e) {} }, []);
   useEffect(() => { loadConversations(); }, [loadConversations]);
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: isStreaming ? 'auto' : 'smooth' }); }, [messages, isStreaming]);
   useEffect(() => { if (textareaRef.current) { textareaRef.current.style.height = 'auto'; textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px'; } }, [input]);
 
   useEffect(() => {
@@ -322,7 +324,13 @@ export default function Chat() {
       let assistantContent = '';
       if (streamMode) {
         const reader = response.body?.getReader(); const decoder = new TextDecoder(); let buffer = ''; setMessages([...allMessages, { role: 'assistant', content: '' }]);
-        if (reader) { while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || ''; for (const line of lines) { const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue; const d = trimmed.slice(6); if (d === '[DONE]') continue; try { const obj = JSON.parse(d); const delta = obj.choices?.[0]?.delta?.content; if (delta) { assistantContent += delta; setMessages(prev => { const updated = [...prev]; updated[updated.length - 1] = { role: 'assistant', content: assistantContent }; return updated; }); } } catch {} } } }
+        const assistantIdx = allMessages.length;
+        // rAF 节流：把"每个 token 一次 setMessages（全量复制 + 整棵树 Markdown 重渲染）"
+        // 降为"每帧最多一次"，渲染次数减少一个数量级，流式依然跟手。
+        let rafId = 0; let pending = false;
+        const flush = () => { rafId = 0; if (!pending) return; pending = false; const snapshot = assistantContent; setMessages(prev => { if (!prev[assistantIdx] || prev[assistantIdx].content === snapshot) return prev; const updated = [...prev]; updated[assistantIdx] = { role: 'assistant', content: snapshot }; return updated; }); };
+        const schedule = () => { pending = true; if (!rafId) rafId = requestAnimationFrame(flush); };
+        if (reader) { let streamErr = ''; while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const lines = buffer.split('\n'); buffer = lines.pop() || ''; for (const line of lines) { const trimmed = line.trim(); if (!trimmed || !trimmed.startsWith('data: ')) continue; const d = trimmed.slice(6); if (d === '[DONE]') continue; try { const obj = JSON.parse(d); if (obj.error) { const em = typeof obj.error === 'string' ? obj.error : (obj.error.message || obj.error.detail); if (em) { streamErr = em; break; } } const delta = obj.choices?.[0]?.delta?.content; if (delta) { assistantContent += delta; schedule(); } } catch {} } if (streamErr) break; } if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } if (streamErr) { assistantContent = 'Error: ' + streamErr; setMessages(prev => { const updated = [...prev]; updated[assistantIdx] = { role: 'assistant', content: assistantContent }; return updated; }); toast({ title: t('common.error'), description: streamErr, variant: 'destructive' }); } else { flush(); } }
       } else { const data = await response.json(); assistantContent = data.choices?.[0]?.message?.content || ''; setMessages([...allMessages, { role: 'assistant', content: assistantContent }]); }
       const finalMessages = [...allMessages, { role: 'assistant' as const, content: assistantContent }];
       await updateConversation(convId, { messages: JSON.stringify(finalMessages), title: allMessages[0]?.content?.slice(0, 50) || t('chat.newChat'), chat_mode: chatMode, stream_mode: streamMode, model_used: chatMode === 'strategy' ? selectedStrategy : selectedModelId, provider_used: chatMode === 'model' ? String(selectedProviderId) : '' });
@@ -409,7 +417,7 @@ export default function Chat() {
           {messages.map((msg, idx) => (
             <div key={idx} className={'flex gap-3 ' + (msg.role === 'user' ? 'justify-end' : 'justify-start')}>
               {msg.role === 'assistant' && <div className='flex-shrink-0 h-8 w-8 rounded-full bg-primary/12 flex items-center justify-center'><Bot className='h-4 w-4 text-primary' aria-hidden='true' /></div>}
-              <div className={'max-w-[70%] rounded-2xl px-4 py-3 text-sm ' + (msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'border bg-card')}>
+              <div className={'max-w-[70%] rounded-2xl px-4 py-3 text-sm ' + (msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'glass-card')}>
                 {msg.files && msg.files.length > 0 && <div className='flex flex-wrap gap-2 mb-2'>{msg.files.map((f, fi) => <div key={fi}>{f.preview ? <img src={f.preview} alt={f.name} className='h-20 rounded-lg border object-cover' /> : <div className='flex items-center gap-1.5 text-xs bg-background/10 rounded-lg px-2 py-1'><FileText className='h-3 w-3' />{f.name}</div>}</div>)}</div>}
                 {msg.richType === 'image' && msg.imageUrls && msg.imageUrls.length > 0 && <div className='flex flex-wrap gap-2 mb-2'>{msg.imageUrls.map((url, ui) => <a key={ui} href={url} target='_blank' rel='noopener noreferrer' className='block'><img src={url} alt={'Generated ' + (ui + 1)} className='max-w-xs max-h-80 rounded-lg border object-contain hover:opacity-90 transition-opacity' /></a>)}</div>}
                 {msg.richType === 'audio' && msg.audioUrl && <div className='mb-2'><audio controls src={msg.audioUrl} className='w-full max-w-sm h-10' /><a href={msg.audioUrl} download='speech.mp3' className='flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1'><Download className='h-3 w-3' />{t('chat.downloadAudio')}</a></div>}

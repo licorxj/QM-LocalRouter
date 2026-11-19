@@ -96,14 +96,23 @@ _rule_token_tracker = RuleTokenTracker()
 class RotationIndex:
     """Cross-request round-robin counter, persisted to DB so restarts resume.
 
-    In-memory cache avoids a DB read per request; every selection writes the
-    new counter back to the rotation_states table (single row upsert).
+    In-memory cache avoids a DB read per request; dirty counters are flushed
+    to the rotation_states table in one batch on a 5s debounce.
+
+    落库节流：计数器每请求 +1（纯内存），DB 写按 5s 窗口合并后台刷盘。
+    之前每请求在全局锁内 SELECT+UPSERT+commit，SQLite 一次 commit 在
+    Windows 上可达几十毫秒，是转发热路径的主要延迟与并发串行化来源之一。
+    代价仅是重启后轮询起点可能落后几秒（本就允许：最坏情况从较旧计数恢复）。
     """
+
+    FLUSH_DELAY_SECONDS = 5.0
 
     def __init__(self):
         self._cache: dict[str, int] = {}
         self._loaded: set[str] = set()
         self._lock = asyncio.Lock()
+        self._dirty: set[str] = set()
+        self._flush_task: asyncio.Task | None = None
 
     async def next(self, scope: str, length: int) -> int:
         if length <= 0:
@@ -118,11 +127,39 @@ class RotationIndex:
                     self._loaded.add(scope)
             counter = self._cache.get(scope, 0)
             self._cache[scope] = counter + 1
-            try:
-                await self._persist(scope, counter + 1)
-            except Exception:
-                pass  # rotation still works; worst case restart resumes from an older counter
+            self._dirty.add(scope)
+            self._schedule_flush()
         return counter % length
+
+    def _schedule_flush(self):
+        if self._flush_task is None or self._flush_task.done():
+            try:
+                self._flush_task = asyncio.create_task(self._flush())
+            except RuntimeError:
+                pass  # 无运行中事件循环（如脚本场景）：仅内存计数
+
+    async def _flush(self):
+        await asyncio.sleep(self.FLUSH_DELAY_SECONDS)
+        async with self._lock:
+            dirty = list(self._dirty)
+            self._dirty.clear()
+        if not dirty:
+            return
+        try:
+            async with async_session() as session:
+                for scope in dirty:
+                    value = self._cache.get(scope, 0)
+                    result = await session.execute(
+                        select(RotationState).where(RotationState.scope == scope)
+                    )
+                    state = result.scalar_one_or_none()
+                    if state is None:
+                        session.add(RotationState(scope=scope, rr_index=value))
+                    else:
+                        state.rr_index = value
+                await session.commit()
+        except Exception:
+            pass  # rotation still works; worst case restart resumes from an older counter
 
     async def _load(self, scope: str):
         async with async_session() as session:
@@ -133,19 +170,6 @@ class RotationIndex:
             if state:
                 self._cache[scope] = state.rr_index or 0
 
-    async def _persist(self, scope: str, value: int):
-        # Dedicated session so caller transactions are untouched
-        async with async_session() as session:
-            result = await session.execute(
-                select(RotationState).where(RotationState.scope == scope)
-            )
-            state = result.scalar_one_or_none()
-            if state is None:
-                session.add(RotationState(scope=scope, rr_index=value))
-            else:
-                state.rr_index = value
-            await session.commit()
-
 
 # Global rotation index instance
 _rotation_index = RotationIndex()
@@ -155,13 +179,17 @@ class Balancer:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def select_rule(self, strategy: Strategy) -> StrategyRule | None:
+    async def select_rule(self, strategy: Strategy, exclude_ids: set[int] | None = None) -> StrategyRule | None:
+        """Select a rule. ``exclude_ids`` holds rules already tried in this
+        request so failover/priority can advance to the next rule by priority."""
         result = await self.db.execute(
             select(StrategyRule)
             .where(StrategyRule.strategy_id == strategy.id, StrategyRule.is_active == True)
             .order_by(StrategyRule.priority, StrategyRule.id)
         )
         rules = result.scalars().all()
+        if exclude_ids:
+            rules = [r for r in rules if r.id not in exclude_ids]
         if not rules:
             return None
 
@@ -204,11 +232,23 @@ class Balancer:
 
         return rules[0]
 
-    async def select_key(self, provider_id: int, strategy: Strategy | None = None) -> ApiKey | None:
-        """Select an API key based on strategy's key_strategy and switch thresholds.
+    async def select_key(
+        self,
+        provider_id: int,
+        strategy: Strategy | None = None,
+        key_policy: Strategy | None = None,
+    ) -> ApiKey | None:
+        """Select an API key based on key strategy and switch thresholds.
 
-        Keys in rate-limit cooldown are skipped; once the cooldown elapses they are
-        automatically revived to ``active`` (network blips never disable a key).
+        ``key_policy`` supplies the key_* settings (e.g. the Provider's own policy
+        in strategy routing); when omitted it falls back to ``strategy``. This lets
+        the model layer obey its own platform's key strategy while retries stay
+        governed by the composite strategy.
+
+        Keys in rate-limit cooldown are skipped for round_robin/random/weighted;
+        once the cooldown elapses they are automatically revived to ``active``.
+        For ``failover`` the cooling keys remain eligible as last-resort candidates
+        and are ranked by cooldown so the healthiest key always wins.
         """
         result = await self.db.execute(
             select(ApiKey)
@@ -220,28 +260,31 @@ class Balancer:
         )
         all_keys = result.scalars().all()
         keys = []
+        cooling_keys: list[ApiKey] = []  # 仍在冷却窗口内，仅 failover 作为末位候选
         revived = False
         now = int(time.time())
         for k in all_keys:
             if k.status == "rate_limited":
                 if (k.cooldown_until or 0) > now:
-                    continue  # 仍在冷却窗口内，暂不参与轮询
+                    cooling_keys.append(k)
+                    continue  # 仍在冷却窗口内，暂不参与常规轮询
                 if revive_expired_cooldown(k, now):
                     revived = True
             keys.append(k)
         if revived:
             await self.db.commit()
-        if not keys:
+        if not keys and not cooling_keys:
             return None
 
-        if not strategy:
-            # Fallback: weighted random
+        if not strategy and not key_policy:
+            # Fallback: weighted random（冷却中的 key 不参与，保持原行为）
             return self._weighted_random(keys)
 
-        key_method = strategy.key_strategy
-        switch_mode = strategy.key_switch_mode
-        rpm_threshold = strategy.key_rpm_threshold
-        count_threshold = strategy.key_count_threshold
+        policy = key_policy if key_policy is not None else strategy
+        key_method = policy.key_strategy
+        switch_mode = policy.key_switch_mode
+        rpm_threshold = policy.key_rpm_threshold
+        count_threshold = policy.key_count_threshold
 
         # Filter out keys that have hit their threshold
         eligible = []
@@ -256,12 +299,16 @@ class Balancer:
             eligible = keys
 
         # Apply key strategy
+        selected: ApiKey | None = None
         if key_method == "round_robin":
             selected = await self._round_robin_key(eligible, provider_id)
         elif key_method == "random":
-            selected = random.choice(eligible)
+            selected = random.choice(eligible) if eligible else None
         elif key_method == "failover":
-            selected = eligible[0]
+            # 按冷却排序：未冷却/已解冻优先，冷却中的按解冻时间排后；
+            # 全部冷却时选最早解冻的那个，不再返回 None。
+            pool = list(eligible) + cooling_keys
+            selected = self._failover_by_cooldown(pool, now)
         else:
             selected = self._weighted_random(eligible)
 
@@ -270,6 +317,27 @@ class Balancer:
             _key_tracker.record_usage(selected.id)
 
         return selected
+
+    @staticmethod
+    def _failover_by_cooldown(keys: list[ApiKey], now: int) -> ApiKey | None:
+        """Pick the healthiest key for failover, ranked by cooldown then failures.
+
+        Rank (ascending, lowest wins):
+          1. still in rate-limit cooldown (0 = usable, 1 = cooling);
+          2. cooldown_until (earlier unlock first, 0 for usable keys);
+          3. fail_count (fewer consecutive auth failures first);
+          4. id (stable tiebreak — reproduces the original ``eligible[0]``
+             behaviour when every key is equally healthy).
+        """
+        if not keys:
+            return None
+
+        def rank(k: ApiKey):
+            cooling = 1 if (k.status == "rate_limited" and int(k.cooldown_until or 0) > now) else 0
+            until = int(k.cooldown_until or 0) if cooling else 0
+            return (cooling, until, int(k.fail_count or 0), int(k.id or 0))
+
+        return min(keys, key=rank)
 
     async def _round_robin_key(self, keys: list[ApiKey], provider_id: int) -> ApiKey | None:
         """Round-robin across keys of one provider, persisted across requests/restarts."""

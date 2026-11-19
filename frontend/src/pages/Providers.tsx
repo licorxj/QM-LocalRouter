@@ -6,7 +6,7 @@ import {
   getFreeModels, joinFreeChannel,
   getKeys, createKey, createKeysBatch, deleteKey, testKey, testAllKeys, deleteInvalidKeys, recoverKeys,
   startOauthLogin, getOauthStatus, getCliPlatforms, cliDetect, cliImport, cliBrowserStart, cliStatus,
-  getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testAllModels, deleteInvalidModels, clearModels,
+  getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testModel, testAllModels, deleteInvalidModels, clearModels,
 } from '../services/api';
 import { useI18n } from '../i18n';
 import { toast } from '../stores/toast';
@@ -24,7 +24,7 @@ import { Separator } from '../components/ui/separator';
 import { StatusBadge, ConfirmDialog } from '../components/shared';
 import {
   Plus, Pencil, Trash2, Trash, Server, Wand2, KeyRound, Zap, Loader2, RefreshCw, Play, Layers, Cpu, Terminal,
-  Video, Mic, Box, ChevronRight, ImageIcon, Search, X, Flame, Copy, Globe, Gift, AlertTriangle,
+  Video, Mic, Box, ChevronRight, ImageIcon, Search, X, Flame, Copy, Globe, Gift, AlertTriangle, Eye, Wrench,
 } from 'lucide-react';
 
 const protocolColors: Record<string, string> = {
@@ -110,12 +110,20 @@ export default function Providers() {
     { value: 'custom', label: 'Custom', desc: t('providers.customProtocol') },
   ];
 
+  // 模型类型（可多选并列展示）：文本 / 图片 / 视频 / 语音 / 嵌入
   const modelTypeOpts = [
-    { value: 'text', label: t('providers.textModel'), icon: Layers, color: 'bg-info/12 text-info border-info/25' },
-    { value: 'image', label: t('providers.imageModel'), icon: ImageIcon, color: 'bg-primary/12 text-primary border-primary/25' },
-    { value: 'video', label: t('providers.videoModel'), icon: Video, color: 'bg-warning/12 text-warning border-warning/25' },
-    { value: 'tts', label: t('providers.ttsModel'), icon: Mic, color: 'bg-success/12 text-success border-success/25' },
-    { value: 'embedding', label: t('providers.embeddingModel'), icon: Box, color: 'bg-muted text-muted-foreground border-border' },
+    { value: 'text', label: t('providers.textModel'), short: t('providers.typeShortText'), icon: Layers, color: 'bg-info/12 text-info border-info/25' },
+    { value: 'image', label: t('providers.imageModel'), short: t('providers.typeShortImage'), icon: ImageIcon, color: 'bg-primary/12 text-primary border-primary/25' },
+    { value: 'video', label: t('providers.videoModel'), short: t('providers.typeShortVideo'), icon: Video, color: 'bg-warning/12 text-warning border-warning/25' },
+    { value: 'tts', label: t('providers.ttsModel'), short: t('providers.typeShortTts'), icon: Mic, color: 'bg-success/12 text-success border-success/25' },
+    { value: 'embedding', label: t('providers.embeddingModel'), short: t('providers.typeShortEmbedding'), icon: Box, color: 'bg-muted text-muted-foreground border-border' },
+  ];
+
+  // 模型能力：识图 / 搜索支持 / 工具调用
+  const capabilityOpts = [
+    { key: 'supports_vision', label: t('providers.capVision'), icon: Eye, color: 'bg-primary/12 text-primary border-primary/25' },
+    { key: 'supports_search', label: t('providers.capSearch'), icon: Globe, color: 'bg-info/12 text-info border-info/25' },
+    { key: 'supports_tools', label: t('providers.capTools'), icon: Wrench, color: 'bg-warning/12 text-warning border-warning/25' },
   ];
 
   const [selectedProvider, setSelectedProvider] = useState<any>(null);
@@ -140,7 +148,8 @@ const [clearingModels, setClearingModels] = useState(false);
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<any>(null);
   const [modelForm, setModelForm] = useState({
-    model_id: '', display_name: '', model_type: 'text', is_multimodal: false,
+    model_id: '', display_name: '', model_types: ['text'] as string[], model_type: 'text', is_multimodal: false,
+    supports_vision: false, supports_search: false, supports_tools: false,
     context_window: '', temperature: '', price_input: '', price_output: '', is_active: true,
   });
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
@@ -207,10 +216,13 @@ const [clearingModels, setClearingModels] = useState(false);
   // --- Mutations ---
   const createProvMut = useMutation({
     mutationFn: (data: any) => createProvider(data),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ['providers'] });
       toast({ title: t('providers.providerCreated'), variant: 'success' });
       setProviderDialogOpen(false);
+      // Newly created provider is returned in full (incl. id) — select it so the
+      // detail pane opens right away; keys/models queries follow selectedProvider.
+      if (res?.data?.id) setSelectedProvider(res.data);
     },
     onError: () => toast({ title: t('providers.createFailed'), variant: 'destructive' }),
   });
@@ -454,28 +466,24 @@ const createModelMut = useMutation({
     mutationFn: async (m: any) => {
       setTestingModelId(m.id);
       try {
-        const res = await fetch('/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: m.model_id,
-            messages: [{ role: 'user', content: 'hi' }],
-            stream: false,
-            max_tokens: 5,
-            _direct_provider_id: m.provider_id,
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error?.detail || res.statusText);
-        }
-        return res.json();
+        return await testModel(m.id);
       } finally {
         setTestingModelId(null);
       }
     },
-    onSuccess: () => toast({ title: t('common.success'), variant: 'success' }),
-    onError: (err: any) => toast({ title: t('common.error'), description: err.message?.slice(0, 100), variant: 'destructive' }),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ['models', selectedProvider?.id] });
+      toast({
+        title: res?.data?.success ? t('providers.testSuccess') : t('providers.testFailed'),
+        description: res?.data?.message?.slice(0, 100),
+        variant: res?.data?.success ? 'success' : 'destructive',
+      });
+    },
+    onError: (err: any) => toast({
+      title: t('providers.testFailed'),
+      description: (err?.response?.data?.detail || err.message || '').slice(0, 100),
+      variant: 'destructive',
+    }),
   });
 
   // --- Sync Models Handlers ---
@@ -546,6 +554,10 @@ const createModelMut = useMutation({
           display_name: m.display_name || '',
           is_multimodal: m.is_multimodal || false,
           model_type: m.model_type || 'text',
+          model_types: m.model_types || m.model_type || 'text',
+          supports_vision: m.supports_vision ?? m.is_multimodal ?? false,
+          supports_search: m.supports_search ?? false,
+          supports_tools: m.supports_tools ?? false,
           context_window: m.context_window || null,
           temperature: m.temperature ?? null,
           price_input: m.price_input ?? null,
@@ -785,26 +797,61 @@ const createModelMut = useMutation({
 
   function openCreateModel() {
     setEditingModel(null);
-    setModelForm({ model_id: '', display_name: '', model_type: 'text', is_multimodal: false, context_window: '', temperature: '', price_input: '', price_output: '', is_active: true });
+    setModelForm({
+      model_id: '', display_name: '', model_types: ['text'], model_type: 'text', is_multimodal: false,
+      supports_vision: false, supports_search: false, supports_tools: false,
+      context_window: '', temperature: '', price_input: '', price_output: '', is_active: true,
+    });
     setModelDialogOpen(true);
   }
 
   function openEditModel(m: any) {
     setEditingModel(m);
     setModelForm({
-      model_id: m.model_id, display_name: m.display_name || '', model_type: m.model_type || 'text',
-      is_multimodal: m.is_multimodal || false, context_window: m.context_window ?? '',
+      model_id: m.model_id, display_name: m.display_name || '',
+      model_types: modelTypeList(m), model_type: m.model_type || 'text',
+      is_multimodal: !!(m.supports_vision || m.is_multimodal),
+      supports_vision: !!(m.supports_vision || m.is_multimodal),
+      supports_search: !!m.supports_search,
+      supports_tools: !!m.supports_tools,
+      context_window: m.context_window ?? '',
       temperature: m.temperature ?? '', price_input: m.price_input ?? '',
       price_output: m.price_output ?? '', is_active: m.is_active,
     });
     setModelDialogOpen(true);
   }
 
+  /** 多选类型：至少保留一个，主类型按媒体优先（与后端 primary_model_type 一致） */
+  function toggleModelType(value: string) {
+    setModelForm(f => {
+      const cur = f.model_types || [];
+      let next = cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value];
+      if (!next.length) next = [value];
+      return { ...f, model_types: next };
+    });
+  }
+
+  function primaryTypeOf(types: string[]): string {
+    for (const t of ['image', 'video', 'tts', 'embedding']) {
+      if (types.includes(t)) return t;
+    }
+    return 'text';
+  }
+
   function saveModel() {
     if (!selectedProvider) return;
+    const validTypes = modelTypeOpts.map(o => o.value);
+    const types = (modelForm.model_types || []).filter(v => validTypes.includes(v));
+    const finalTypes = types.length ? types : ['text'];
     const data: any = {
       ...modelForm,
       provider_id: selectedProvider.id,
+      model_types: finalTypes.join(','),
+      model_type: primaryTypeOf(finalTypes),
+      is_multimodal: !!modelForm.supports_vision,
+      supports_vision: !!modelForm.supports_vision,
+      supports_search: !!modelForm.supports_search,
+      supports_tools: !!modelForm.supports_tools,
       context_window: modelForm.context_window ? Number(modelForm.context_window) : null,
       temperature: modelForm.temperature ? Number(modelForm.temperature) : null,
       price_input: modelForm.price_input ? Number(modelForm.price_input) : null,
@@ -973,11 +1020,54 @@ const createModelMut = useMutation({
     return <StatusBadge tone='neutral'>{t('providers.keyStatusUntested')}</StatusBadge>;
   }
 
-  function getModelTypeBadge(type: string) {
-    const mt = modelTypeOpts.find(m => m.value === type);
-    if (!mt) return <Badge className='text-xs'>{type}</Badge>;
-    const Icon = mt.icon;
-    return <Badge className={mt.color + ' text-xs border flex items-center gap-1'}><Icon className='w-3 h-3' aria-hidden='true' />{mt.label}</Badge>;
+  /** 模型支持的全部类型：优先读 model_types（逗号串），为空回退 model_type，再兜底文本模型 */
+  function modelTypeList(m: any): string[] {
+    const valid = modelTypeOpts.map(o => o.value);
+    const raw = typeof m?.model_types === 'string' ? m.model_types : '';
+    const list = raw
+      .split(',')
+      .map((v: string) => v.trim().toLowerCase())
+      .map((v: string) => (v === 'audio' ? 'tts' : v))
+      .filter((v: string) => valid.includes(v));
+    if (list.length) return Array.from(new Set(list)) as string[];
+    const fallback = String(m?.model_type || 'text').toLowerCase();
+    return valid.includes(fallback) ? [fallback] : ['text'];
+  }
+
+  function getModelTypeBadges(m: any) {
+    return (
+      <span className='flex flex-wrap items-center gap-1'>
+        {modelTypeList(m).map(type => {
+          const mt = modelTypeOpts.find(o => o.value === type) || modelTypeOpts[0];
+          const Icon = mt.icon;
+          return (
+            <Badge key={type} title={mt.label} className={mt.color + ' text-[10px] border flex items-center gap-1 px-1.5 py-0 font-medium'}>
+              <Icon className='w-3 h-3' aria-hidden='true' />{mt.short}
+            </Badge>
+          );
+        })}
+      </span>
+    );
+  }
+
+  /** 模型能力：识图 / 搜索支持 / 工具调用（老数据仅有 is_multimodal，视为识图） */
+  function getCapabilityBadges(m: any) {
+    const active = capabilityOpts.filter(c =>
+      c.key === 'supports_vision' ? !!(m?.supports_vision || m?.is_multimodal) : !!m?.[c.key]
+    );
+    if (!active.length) return <span className='text-xs text-muted-foreground'>-</span>;
+    return (
+      <span className='flex flex-wrap items-center gap-1'>
+        {active.map(c => {
+          const Icon = c.icon;
+          return (
+            <Badge key={c.key} title={c.label} className={c.color + ' text-[10px] border flex items-center gap-1 px-1.5 py-0 font-medium'}>
+              <Icon className='w-3 h-3' aria-hidden='true' />{c.label}
+            </Badge>
+          );
+        })}
+      </span>
+    );
   }
 
   function getModelTestStatusBadge(status: string) {
@@ -992,24 +1082,23 @@ const createModelMut = useMutation({
 
   return (
     <>
-    <div className='flex h-[calc(100vh-3.5rem)] -m-6 lg:-m-8 gap-4 p-4 lg:p-6'>
+    <div className='flex h-[calc(100vh-3.5rem)] -m-6 lg:-m-8 flex-col'>
+      <div className='flex-none flex flex-wrap items-center gap-2 bg-background px-4 lg:px-6 pt-1 pb-2'>
+        <h2 className='text-lg font-semibold tracking-tight mr-1'>{t('providers.title')}</h2>
+        <Button variant='outline' size='sm' onClick={openOnlineProviders} title={t('providers.onlinePlatformsTitle')}>
+          <Globe className='w-4 h-4 mr-1' />{t('providers.onlinePlatforms')}
+        </Button>
+        <Button variant='outline' size='sm' onClick={openHotProviders}><Flame className='w-4 h-4 mr-1' />{t('providers.hotPlatforms')}</Button>
+        <Button variant='outline' size='sm' onClick={openCliImport} title={t('providers.localCliTitle')}>
+          <Terminal className='w-4 h-4 mr-1' />{t('providers.localCli')}
+        </Button>
+        <Button variant='outline' size='sm' onClick={() => openFreeModels()} title={t('providers.freeModelsTitle')}>
+          <Gift className='w-4 h-4 mr-1' />{t('providers.freeModels')}
+        </Button>
+        <Button size='sm' className='ml-auto' onClick={openCreateProvider} title={t('providers.addProviderTitle')}><Plus className='w-4 h-4' /></Button>
+      </div>
+      <div className='flex flex-1 min-h-0 gap-4 px-4 lg:px-6 pb-4 lg:pb-6'>
       <div className='w-72 flex-shrink-0 flex flex-col gap-2'>
-        <h2 className='text-lg font-semibold tracking-tight'>{t('providers.title')}</h2>
-        <div className='flex gap-1 mb-2'>
-          <Button variant='outline' size='sm' onClick={openOnlineProviders} title={t('providers.onlinePlatformsTitle')}>
-            <Globe className='w-4 h-4 mr-1' />{t('providers.onlinePlatforms')}
-          </Button>
-          <Button variant='outline' size='sm' onClick={openHotProviders}><Flame className='w-4 h-4 mr-1' />{t('providers.hotPlatforms')}</Button>
-          <Button size='sm' onClick={openCreateProvider}><Plus className='w-4 h-4' /></Button>
-        </div>
-        <div className='flex gap-1 mb-2'>
-          <Button variant='outline' size='sm' onClick={openCliImport} title={t('providers.localCliTitle')}>
-            <Terminal className='w-4 h-4 mr-1' />{t('providers.localCli')}
-          </Button>
-          <Button variant='outline' size='sm' onClick={() => openFreeModels()} title={t('providers.freeModelsTitle')}>
-            <Gift className='w-4 h-4 mr-1' />{t('providers.freeModels')}
-          </Button>
-        </div>
         <div className='relative'>
           <Search className='absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground' />
           <Input value={providerSearch} onChange={e => setProviderSearch(e.target.value)} placeholder={t('common.search') + '...'} className='pl-8 h-8 text-xs' />
@@ -1078,6 +1167,9 @@ const createModelMut = useMutation({
                       </span>
                     )}
                   </Badge>
+                  <Badge variant='secondary' className='ml-1 whitespace-nowrap' title={t('providers.configuredKeys', { count: keys.length })}>
+                    {t('providers.configuredKeys', { count: keys.length })}
+                  </Badge>
                 </h4>
                 <div className='flex gap-1'>
                   <Button variant='outline' size='sm' onClick={openKeyPolicy}><Layers className='w-3 h-3 mr-1' />{t('providers.keyPolicy')}</Button>
@@ -1087,7 +1179,8 @@ const createModelMut = useMutation({
                 </div>
               </div>
               {keys.length === 0 ? <p className='text-sm text-muted-foreground py-2'>{t('providers.noKeys')}</p> : (
-                <Table><TableHeader><TableRow>
+                <div className='max-h-[176px] overflow-y-auto border rounded-md'>
+                <Table><TableHeader className='sticky top-0 z-10 bg-background'><TableRow>
                   <TableHead>{t('providers.keyValue')}</TableHead>
                   <TableHead>{t('providers.alias')}</TableHead>
                   <TableHead>{t('providers.weight')}</TableHead>
@@ -1098,7 +1191,7 @@ const createModelMut = useMutation({
                   {keys.map((k: any) => (
                     <TableRow key={k.id}>
                       <TableCell className='font-mono text-xs'>
-                        <span className='flex items-center gap-1'>
+                        <span className='flex items-start gap-1'>
                           {k.key_masked}
                           <Button variant='ghost' size='sm' className='h-5 w-5 p-0 opacity-50 hover:opacity-100' onClick={() => { navigator.clipboard.writeText(k.key_value); toast({ title: t('common.copied'), variant: 'success' as any }); }}>
                             <Copy className='h-3 w-3' />
@@ -1121,6 +1214,7 @@ const createModelMut = useMutation({
                     </TableRow>
                   ))}
                 </TableBody></Table>
+                </div>
               )}
 
               <Separator className='my-3' />
@@ -1168,7 +1262,7 @@ const createModelMut = useMutation({
                   {models.filter((m: any) => !modelSearch || m.model_id.toLowerCase().includes(modelSearch.toLowerCase()) || (m.display_name || '').toLowerCase().includes(modelSearch.toLowerCase())).map((m: any) => (
                     <TableRow key={m.id}>
                       <TableCell className='font-mono text-xs'>
-                        <span className='flex items-center gap-1'>
+                        <span className='flex items-start gap-1'>
                           {m.model_id}
                           <Button variant='ghost' size='sm' className='h-5 w-5 p-0 opacity-50 hover:opacity-100' title={t('providers.copyModelDirectName')} onClick={() => { const directName = `${selectedProvider.id}/${m.model_id}`; navigator.clipboard.writeText(directName); toast({ title: t('common.copied') + ': ' + directName, variant: 'success' as any }); }}>
                             <Copy className='h-3 w-3' />
@@ -1176,8 +1270,8 @@ const createModelMut = useMutation({
                         </span>
                       </TableCell>
                       <TableCell>{m.display_name || '-'}</TableCell>
-                      <TableCell>{getModelTypeBadge(m.model_type)}</TableCell>
-                      <TableCell>{m.is_multimodal ? t('providers.isYes') : '-'}</TableCell>
+                      <TableCell>{getModelTypeBadges(m)}</TableCell>
+                      <TableCell>{getCapabilityBadges(m)}</TableCell>
                       <TableCell className='text-xs'>{m.context_window ? (m.context_window >= 1000000 ? (m.context_window / 1000000) + 'M' : m.context_window >= 1000 ? (m.context_window / 1000) + 'K' : m.context_window) : '-'}</TableCell>
                       <TableCell className='text-xs'>{m.price_input != null ? '$' + m.price_input : '-'}</TableCell>
                       <TableCell>{getModelTestStatusBadge(m.status || 'untested')}</TableCell>
@@ -1196,6 +1290,7 @@ const createModelMut = useMutation({
             </CardContent></Card>
           </div>
         )}
+      </div>
       </div>
     </div>
 
@@ -1508,11 +1603,13 @@ const createModelMut = useMutation({
           <div><Label>{t('providers.displayName')}</Label><Input value={modelForm.display_name} onChange={e => setModelForm(f => ({ ...f, display_name: e.target.value }))} className='mt-1' /></div>
 
           <div><Label>{t('providers.modelType')}</Label>
+            <p className='text-xs text-muted-foreground mt-1'>{t('providers.modelTypesHint')}</p>
             <div className='flex flex-wrap gap-2 mt-2'>
               {modelTypeOpts.map(mt => {
                 const Icon = mt.icon;
+                const active = (modelForm.model_types || []).includes(mt.value);
                 return (
-                  <button key={mt.value} type='button' onClick={() => setModelForm(f => ({ ...f, model_type: mt.value }))} className={mt.color + ' flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-all ' + (modelForm.model_type === mt.value ? 'border-current' : 'border-border hover:border-primary/50')}>
+                  <button key={mt.value} type='button' onClick={() => toggleModelType(mt.value)} className={mt.color + ' flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-all ' + (active ? 'border-current' : 'opacity-50 border-border hover:border-primary/50 hover:opacity-100')}>
                     <Icon className='w-3.5 h-3.5' />{mt.label}
                   </button>
                 );
@@ -1520,9 +1617,19 @@ const createModelMut = useMutation({
             </div>
           </div>
 
-          <div className='flex items-center gap-3'>
-            <Switch checked={modelForm.is_multimodal} onCheckedChange={v => setModelForm(f => ({ ...f, is_multimodal: v }))} />
-            <div><p className='text-sm font-medium'>{t('providers.multimodal')}</p><p className='text-xs text-muted-foreground'>{t('providers.multimodalDesc')}</p></div>
+          <div><Label>{t('providers.capabilities')}</Label>
+            <p className='text-xs text-muted-foreground mt-1'>{t('providers.capabilitiesHint')}</p>
+            <div className='flex flex-wrap gap-2 mt-2'>
+              {capabilityOpts.map(cap => {
+                const Icon = cap.icon;
+                const active = !!(modelForm as any)[cap.key];
+                return (
+                  <button key={cap.key} type='button' onClick={() => setModelForm(f => ({ ...f, [cap.key]: !(f as any)[cap.key] } as any))} className={cap.color + ' flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-all ' + (active ? 'border-current' : 'opacity-50 border-border hover:border-primary/50 hover:opacity-100')}>
+                    <Icon className='w-3.5 h-3.5' />{cap.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div><Label>{t('providers.contextWindow')}</Label>
@@ -1924,8 +2031,8 @@ const createModelMut = useMutation({
                           </span>
                         </TableCell>
                         <TableCell>{m.display_name || '-'}</TableCell>
-                        <TableCell>{getModelTypeBadge(m.model_type)}</TableCell>
-                        <TableCell>{m.is_multimodal ? t('providers.isYes') : '-'}</TableCell>
+                        <TableCell>{getModelTypeBadges(m)}</TableCell>
+                        <TableCell>{getCapabilityBadges(m)}</TableCell>
                         <TableCell className='text-xs'>{m.context_window ? (m.context_window >= 1000000 ? (m.context_window / 1000000) + 'M' : m.context_window >= 1000 ? (m.context_window / 1000) + 'K' : m.context_window) : '-'}</TableCell>
                         <TableCell className='text-xs'>{m.price_input != null ? '$' + m.price_input : '-'}</TableCell>
                         <TableCell>

@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '',
+  // 防止慢/失联请求无限挂起、堆积占用连接（流式聊天走原生 fetch，不受此限制）。
+  timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -52,6 +54,7 @@ export const updateModel = (id: number, data: any) => api.put('/api/models/' + i
 export const deleteModel = (id: number) => api.delete('/api/models/' + id);
 export const fetchModels = (providerId: number) => api.post('/api/models/fetch/' + providerId);
 export const syncModels = (providerId: number) => api.post('/api/models/sync/' + providerId);
+export const testModel = (id: number) => api.post('/api/models/' + id + '/test');
 export const testAllModels = (providerId: number) => api.post('/api/providers/' + providerId + '/models/test-all');
 export const deleteInvalidModels = (providerId: number) => api.delete('/api/providers/' + providerId + '/models/invalid');
 export const clearModels = (providerId: number) => api.delete('/api/providers/' + providerId + '/models');
@@ -65,6 +68,8 @@ export const addRule = (strategyId: number, data: any) => api.post('/api/strateg
 export const updateRule = (ruleId: number, data: any) => api.put('/api/strategies/rules/' + ruleId, data);
 export const deleteRule = (ruleId: number) => api.delete('/api/strategies/rules/' + ruleId);
 export const testStrategy = (id: number) => api.post('/api/strategies/' + id + '/test');
+export const testStrategyRules = (id: number) => api.post('/api/strategies/' + id + '/test-rules');
+export const testStrategyRule = (strategyId: number, ruleId: number) => api.post('/api/strategies/' + strategyId + '/rules/' + ruleId + '/test');
 
 // Logs
 export const getLogs = (params: any) => api.get('/api/logs', { params });
@@ -75,6 +80,10 @@ export const clearTodayStats = () => api.post('/api/dashboard/clear-today');
 
 // Health
 export const getHealth = () => api.get('/api/health');
+
+// Monitor (可视化监控)
+export const getMonitorRecent = () => api.get('/api/monitor/recent');
+export const monitorStreamUrl = () => '/api/monitor/stream';
 
 // Icons
 export const searchIcons = (keyword: string, page?: number, engine?: string) => api.post('/api/icons/search', { keyword, page: page || 0, count: 9, engine: engine || 'baidu' });
@@ -96,6 +105,45 @@ export const updateSettings = (data: any) => api.put("/api/settings", data);
 export const getLanIp = () => api.get("/api/settings/lan-ip");
 export const getRepositoryStatus = () => api.get("/api/settings/repository");
 export const updateRepository = () => api.post("/api/settings/repository/update");
+
+// Project self-update (GitHub Releases / git)
+export const checkAppUpdate = (fetch = true) => api.get(`/api/update/check?fetch=${fetch ? 1 : 0}`);
+export const applyAppUpdate = (asset?: string) => api.post("/api/update/apply", asset ? { asset } : {});
+export const getUpdateStatus = () => api.get("/api/update/status");
+
+// Account Center (账号接入, EchoBird-style)
+export const getAccountPlatforms = () => api.get('/api/accounts/platforms');
+export const getAccounts = () => api.get('/api/accounts');
+export const startAccountLogin = (platform: string) => api.post('/api/accounts/' + platform + '/login');
+export const refreshAccount = (keyId: number) => api.post('/api/accounts/' + keyId + '/refresh');
+export const claimAccount = (keyId: number) => api.post('/api/accounts/' + keyId + '/claim');
+export const syncModelGroups = () => api.post('/api/accounts/sync-model-groups');
+export const claimAllAccounts = (platform?: string) => api.post('/api/accounts/claim-all', platform ? { platform } : {});
+// ZCode 本地客户端签到（按账号隔离 profile；不传 keyId 时平台级兼容）
+export const getZcodeClaimStatus = () => api.get('/api/accounts/zcode/status');
+export const claimZcode = (keyId?: number) => api.post('/api/accounts/zcode/claim', keyId != null ? { key_id: keyId } : {});
+// Plugin-backed account operations (echobird-plugin)
+export const getPluginLoginStatus = (loginId: string) => api.get('/api/accounts/plugin-login/' + loginId);
+export const cancelPluginLogin = (loginId: string) => api.post('/api/accounts/plugin-login/' + loginId + '/cancel');
+export const refreshPluginAccount = (application: string, accountId: string) => api.post('/api/accounts/plugin/' + application + '/' + accountId + '/refresh');
+export const claimPluginAccount = (application: string, accountId: string) => api.post('/api/accounts/plugin/' + application + '/' + accountId + '/claim');
+export const deletePluginAccount = (application: string, accountId: string) => api.delete('/api/accounts/plugin/' + application + '/' + accountId);
+// EchoBird-native platform account operations (DeepSeek Harness / Kilo / Qoder / QwenWork)
+export const getEchoLoginStatus = (loginId: string) => api.get('/api/accounts/echo-login/' + loginId);
+export const cancelEchoLogin = (loginId: string) => api.post('/api/accounts/echo-login/' + loginId + '/cancel');
+export const refreshEchoAccount = (platform: string, accountId: string) => api.post('/api/accounts/echo/' + platform + '/' + accountId + '/refresh');
+export const claimEchoAccount = (platform: string, accountId: string) => api.post('/api/accounts/echo/' + platform + '/' + accountId + '/claim');
+export const deleteEchoAccount = (platform: string, accountId: string) => api.delete('/api/accounts/echo/' + platform + '/' + accountId);
+
+// Plugin Hub (echobird-plugin 管理与同步)
+export const getPlugins = () => api.get('/api/plugins');
+export const checkPluginUpdates = () => api.post('/api/plugins/check');
+export const installPlugin = (pluginId: string) => api.post('/api/plugins/' + pluginId + '/install');
+export const getPluginTask = () => api.get('/api/plugins/task');
+export const enablePlugin = (pluginId: string) => api.post('/api/plugins/' + pluginId + '/enable');
+export const disablePlugin = (pluginId: string) => api.post('/api/plugins/' + pluginId + '/disable');
+export const uninstallPlugin = (pluginId: string) => api.delete('/api/plugins/' + pluginId);
+export const updatePluginSettings = (data: any) => api.put('/api/plugins/settings', data);
 
 // Conversations
 export const getConversations = () => api.get('/api/conversations');

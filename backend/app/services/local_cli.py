@@ -745,10 +745,11 @@ async def poll_zcode_session(session_id: str, db: AsyncSession) -> dict:
     if email:
         credential["email"] = email
     provider_id = await ensure_provider(db, session["platform_id"], session["provider_id"])
-    key = await store_cli_key(db, provider_id, session["platform_id"], credential)
-    if email:
-        key.alias = email
-        await db.commit()
+    account_key = zcode_account_key(credential, data["token"])
+    key = await store_cli_key(db, provider_id, session["platform_id"], credential,
+                              account_key=account_key)
+    # alias 即 account_key（zcode:<email>），email 已随 credential 存入 oauth_refresh blob
+    # 供卡片展示，这里不能再覆盖 alias，否则下次同账号导入会因 key 不匹配而重复建卡。
     _complete_cli(session_id, key.id)
     return {"status": "success", "key_id": key.id, "account": email or "zcode"}
 
@@ -796,9 +797,34 @@ def parse_code_from_paste(pasted: str) -> str:
     return pasted
 
 
+def zcode_account_key(credential: dict, access: str = "") -> str:
+    """为 zcode 账号生成稳定的区分键：优先 email，缺失时用 token 指纹兜底。
 
-async def store_cli_key(db: AsyncSession, provider_id: int, platform_id: str, credential: dict) -> ApiKey:
-    """Store imported CLI credentials as the provider's key (replaces previous)."""
+    同一账号（同 email）重复导入得到相同 key → 替换旧凭据，不重复建卡；
+    不同账号（不同 email）得到不同 key → 共存，界面显示多张 zcode 卡片。
+    """
+    import hashlib
+    email = ""
+    for k in ("email", "user", "nickname", "name"):
+        v = credential.get(k)
+        if isinstance(v, str) and v.strip():
+            email = v.strip().lower()
+            break
+    if email:
+        return f"zcode:{email}"
+    seed = access or str(credential.get("zcodejwttoken") or "")
+    return "zcode:" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+async def store_cli_key(db: AsyncSession, provider_id: int, platform_id: str, credential: dict,
+                        account_key: str | None = None) -> ApiKey:
+    """Store imported CLI credentials as the provider's key (replaces previous).
+
+    account_key 用于区分同一平台下的多个账号（目前仅 zcode 使用）：
+      · 传值时：只替换 alias == account_key 的旧记录，其他账号共存；alias 记为 account_key。
+      · 未传时：替换该 provider + platform 下的全部旧记录（保持单账号平台的既有行为）。
+    zcode 支持多 GLM 账号，account_key 由调用方按 email / token 指纹生成。
+    """
     # normalize camelCase keys from AWS SSO files
     norm = {}
     mapping = {"refreshToken": "refresh_token", "clientId": "client_id", "clientSecret": "client_secret",
@@ -809,9 +835,26 @@ async def store_cli_key(db: AsyncSession, provider_id: int, platform_id: str, cr
     access = norm.get("access_token") or norm.get("refresh_token") or norm.get("id_token") or ""
     if not access and not CLI_PLATFORMS.get(platform_id, {}).get("no_credential_ok"):
         raise ValueError("credential payload has no usable token")
+    if platform_id == "zcode" and isinstance(access, str) and access.startswith("enc:"):
+        # 官方客户端凭据是本机加密密文（enc:v1/v2），粘贴或检测到密文必须先解密再入库，
+        # 否则转发/额度查询拿到的是密文字符串（表现为登录失效）
+        from app.services import zcode as zcode_svc
+        try:
+            access = zcode_svc.decrypt_credential_blob(access)
+        except ValueError as e:
+            raise ValueError(
+                f"ZCode 凭据解密失败：{str(e)[:120]}"
+                "（新版客户端 enc:v2:os 格式暂不支持，请从官方客户端旧版凭据导入或改用浏览器授权）"
+            )
+        if norm.get("access_token") is not None:
+            norm["access_token"] = access
     blob = {k: v for k, v in norm.items() if k != "access_token"}
 
-    result = await db.execute(select(ApiKey).where(ApiKey.provider_id == provider_id, ApiKey.oauth_profile == platform_id))
+    # 有 account_key 时只替换同账号记录（多账号共存）；否则替换该平台全部旧记录（单账号平台）
+    q = select(ApiKey).where(ApiKey.provider_id == provider_id, ApiKey.oauth_profile == platform_id)
+    if account_key:
+        q = q.where(ApiKey.alias == account_key)
+    result = await db.execute(q)
     for old in result.scalars().all():
         await db.delete(old)
     expires_at = 0
@@ -821,7 +864,7 @@ async def store_cli_key(db: AsyncSession, provider_id: int, platform_id: str, cr
     key = ApiKey(
         provider_id=provider_id,
         key_value=encrypt_value(access),
-        alias=f"CLI-{platform_id}",
+        alias=account_key or f"CLI-{platform_id}",
         weight=1,
         status="active",
         oauth_profile=platform_id,

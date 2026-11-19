@@ -24,6 +24,12 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app.utils.known_models import (
+    infer_model_capabilities,
+    infer_model_types,
+    primary_model_type,
+)
+
 # 与 dsh-our-free-model 的 UPSTREAM_BASE / KILO_BASE 同源，可用环境变量覆盖
 OPENCODE_BASE = (os.getenv("FREE_MODELS_OPENCODE_BASE") or "https://opencode.ai").rstrip("/")
 KILO_BASE = (os.getenv("FREE_MODELS_KILO_BASE") or "https://api.kilo.ai/api/gateway").rstrip("/")
@@ -33,6 +39,10 @@ CACHE_TTL_SECONDS = 600
 _channels_cache: dict | None = None
 _channels_cache_at = 0.0
 
+# config.json 内容小但每次转发都要读；按 mtime 缓存，避免同步 open 阻塞事件循环。
+_gw_config_cache: dict | None = None
+_gw_config_mtime: float = 0.0
+
 
 def read_gateway_config() -> dict | None:
     """读取根目录 opencode2api 网关 config.json 的 listen + server_keys，
@@ -41,6 +51,7 @@ def read_gateway_config() -> dict | None:
     listen 形如 ``127.0.0.1:12005`` → 网关 OpenAI 兼容地址 ``http://127.0.0.1:12005/v1``；
     server_keys 取第一个作为网关密钥（如 ["admin"] → "admin"）。
     """
+    global _gw_config_cache, _gw_config_mtime
     here = os.path.dirname(os.path.abspath(__file__))  # backend/app/services
     candidates = [
         os.path.dirname(os.path.dirname(os.path.dirname(here))),  # 仓库根（services→app→backend→根）
@@ -52,6 +63,12 @@ def read_gateway_config() -> dict | None:
             continue
         p = os.path.join(root, "config.json")
         try:
+            mtime = os.stat(p).st_mtime
+        except OSError:
+            continue
+        if _gw_config_cache is not None and mtime == _gw_config_mtime and _gw_config_cache.get("path") == p:
+            return _gw_config_cache
+        try:
             with open(p, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
@@ -61,11 +78,13 @@ def read_gateway_config() -> dict | None:
             continue
         host = listen if "://" in listen else "http://" + listen
         keys = data.get("server_keys") or []
-        return {
+        _gw_config_cache = {
             "url": host.rstrip("/") + "/v1",
             "key": str(keys[0]).strip() if keys else "",
             "path": p,
         }
+        _gw_config_mtime = mtime
+        return _gw_config_cache
     return None
 
 
@@ -75,8 +94,8 @@ _gw_lock: asyncio.Lock | None = None
 async def _probe_gateway(base_url: str) -> bool:
     """网关探活：/models 可达（含 401/403 等鉴权拒绝）即视为在运行。"""
     try:
-        async with httpx.AsyncClient(timeout=2.0, trust_env=False) as client:
-            resp = await client.get(base_url.rstrip("/") + "/models")
+        from app.utils import ssl_relax
+        resp = await ssl_relax.request("GET", base_url.rstrip("/") + "/models", timeout=2.0)
         return resp.status_code < 500
     except Exception:
         return False
@@ -179,15 +198,21 @@ def _normalize_opencode(entry: dict) -> dict | None:
     limit = entry.get("limit") or {}
     caps = entry.get("capabilities") or {}
     modalities = entry.get("modalities") or {}
+    # 类型/能力统一走 known_models 的推断（上游无类型信息时回退文本模型）
+    types = infer_model_types(mid, entry)
+    caps_info = infer_model_capabilities(mid, entry, "image" in (modalities.get("input") or []))
     return {
         "model_id": mid,
         "display_name": (entry.get("name") or mid).strip(),
         "description": (entry.get("description") or "").strip()[:300],
         "context_window": limit.get("context"),
         "max_output": limit.get("output"),
-        "is_multimodal": "image" in (modalities.get("input") or []),
-        "model_type": "text",
-        "supports_tools": bool((caps.get("tools") or {}).get("supported")),
+        "is_multimodal": caps_info["supports_vision"],
+        "model_type": primary_model_type(types),
+        "model_types": ",".join(types),
+        "supports_vision": caps_info["supports_vision"],
+        "supports_search": caps_info["supports_search"],
+        "supports_tools": caps_info["supports_tools"],
         "supports_reasoning": bool((caps.get("reasoning") or {}).get("supported")),
     }
 
@@ -200,15 +225,20 @@ def _normalize_kilo(entry: dict) -> dict | None:
     provider = entry.get("top_provider") or {}
     arch = entry.get("architecture") or {}
     params = entry.get("supported_parameters") or []
+    types = infer_model_types(mid, entry)
+    caps_info = infer_model_capabilities(mid, entry, "image" in (arch.get("input_modalities") or []))
     return {
         "model_id": mid,
         "display_name": (entry.get("name") or mid).strip(),
         "description": (entry.get("description") or "").strip()[:300],
         "context_window": entry.get("context_length") or provider.get("context_length"),
         "max_output": provider.get("max_completion_tokens"),
-        "is_multimodal": "image" in (arch.get("input_modalities") or []),
-        "model_type": "text",
-        "supports_tools": "tools" in params,
+        "is_multimodal": caps_info["supports_vision"],
+        "model_type": primary_model_type(types),
+        "model_types": ",".join(types),
+        "supports_vision": caps_info["supports_vision"],
+        "supports_search": caps_info["supports_search"],
+        "supports_tools": caps_info["supports_tools"],
         "supports_reasoning": "reasoning" in params,
     }
 

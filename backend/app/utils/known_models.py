@@ -141,3 +141,133 @@ def detect_model_type(model_id: str) -> str:
     if any(k in mid for k in ["video", "sora", "kling", "veo"]):
         return "video"
     return "text"
+
+
+# 模型类型（展示顺序）：文本 / 图片 / 视频 / 语音 / 嵌入
+MODEL_TYPES = ("text", "image", "video", "tts", "embedding")
+_TYPE_ALIASES = {"audio": "tts", "speech": "tts", "embeddings": "embedding", "vision": "text"}
+
+# 识图能力：模型名出现这些片段即认为支持图片输入（上游多不声明，靠命名兜底）
+_VISION_HINTS = (
+    "vision", "-vl", "vl-", "omni", "llava", "pixtral", "internvl", "glm-4v", "4v-",
+    "gpt-4o", "gpt-4.1", "gemini", "claude-3", "claude-sonnet", "claude-opus",
+    "qwen2-vl", "qwen2.5-vl", "qvq", "molmo", "minicpm-v",
+)
+
+# 搜索支持：模型自带联网检索能力（Perplexity / Sonar / 带 search 后缀的模型）
+_SEARCH_HINTS = ("search", "sonar", "perplexity")
+
+# 工具调用：OpenAI 兼容 /models 几乎都不声明该能力，因此文本对话模型默认视为支持；
+# 明确非对话用途（语音/音乐/图像/视频/检索等）的模型排除。
+_NON_TOOL_HINTS = (
+    "rerank", "bge", "jina", "chirp", "whisper", "tts", "speech", "music",
+    "image", "video", "sora", "kling", "veo", "flux", "dall-e",
+    "stable-diffusion", "midjourney", "midi", "separation", "embedding", "embed",
+)
+
+
+def normalize_model_types(value) -> list[str]:
+    """把 "text,image" 串或列表统一成合法类型列表（去重、保序，空则回退 text）。"""
+    if not value:
+        raw: list = []
+    elif isinstance(value, str):
+        raw = value.replace("，", ",").split(",")
+    else:
+        raw = list(value)
+    out: list[str] = []
+    for item in raw:
+        t = str(item or "").strip().lower()
+        t = _TYPE_ALIASES.get(t, t)
+        if t in MODEL_TYPES and t not in out:
+            out.append(t)
+    return out or ["text"]
+
+
+def _upstream_modalities(item: dict) -> tuple[list[str], list[str]]:
+    """读取上游声明的输入/输出模态（OpenRouter / OpenCode / 免费池等口径不一，逐个兼容）。"""
+    item = item or {}
+    arch = item.get("architecture") or {}
+    mods = item.get("modalities") or {}
+    inputs = arch.get("input_modalities") or item.get("input_modalities") or mods.get("input") or []
+    outputs = arch.get("output_modalities") or item.get("output_modalities") or mods.get("output") or []
+    return [str(x).lower() for x in inputs or []], [str(x).lower() for x in outputs or []]
+
+
+def infer_model_types(model_id: str, item: dict | None = None) -> list[str]:
+    """推断模型支持的全部类型。
+
+    优先使用上游声明的输出模态（image/video/audio/embedding/text），
+    上游没有类型信息时退回模型名启发式，仍无法判断则统一按文本模型展示。
+    """
+    item = item or {}
+    _, outputs = _upstream_modalities(item)
+    methods = [str(m).lower() for m in (item.get("supportedGenerationMethods") or [])]
+
+    types: list[str] = []
+    if any("embed" in m for m in methods) or any("embed" in o for o in outputs):
+        types.append("embedding")
+    if "image" in outputs:
+        types.append("image")
+    if "video" in outputs:
+        types.append("video")
+    if any(o in ("audio", "speech", "tts") for o in outputs):
+        types.append("tts")
+    if "text" in outputs:
+        types.append("text")
+    if not types:
+        types = [detect_model_type(model_id)]
+    return normalize_model_types(types)
+
+
+def infer_model_capabilities(
+    model_id: str, item: dict | None = None, is_multimodal: bool = False
+) -> dict[str, bool]:
+    """推断模型能力：识图 / 搜索支持 / 工具调用（上游未声明时按模型名兜底）。"""
+    item = item or {}
+    inputs, _ = _upstream_modalities(item)
+    caps = item.get("capabilities") or {}
+    params = [
+        str(p).lower()
+        for p in (item.get("supported_parameters") or item.get("parameters") or [])
+    ]
+    mid = (model_id or "").lower()
+
+    vision = (
+        bool(is_multimodal)
+        or "image" in inputs
+        or bool(item.get("supports_images"))
+        or bool(caps.get("vision"))
+        or "vision" in params
+        or any(h in mid for h in _VISION_HINTS)
+    )
+    declared_tools = bool(
+        (caps.get("tools") or {}).get("supported")
+        or item.get("supports_tools")
+        or "tools" in params
+        or "tool_choice" in params
+    )
+    types = infer_model_types(model_id, item)
+    text_chat_model = "text" in types and not any(
+        t in types for t in ("image", "video", "tts", "embedding")
+    )
+    tools = declared_tools or (
+        text_chat_model and not any(h in mid for h in _NON_TOOL_HINTS)
+    )
+    search = (
+        bool((caps.get("web_search") or {}).get("supported"))
+        or bool(item.get("supports_search"))
+        or any(p in ("web_search", "search", "search_preview") for p in params)
+        or any(h in mid for h in _SEARCH_HINTS)
+    )
+    # 纯嵌入模型没有识图语义（名字里带 gemini/claude 等命名兜底会造成误判）
+    if vision and infer_model_types(model_id, item) == ["embedding"]:
+        vision = False
+    return {"supports_vision": vision, "supports_search": search, "supports_tools": tools}
+
+
+def primary_model_type(types: list[str]) -> str:
+    """挑选路由主类型：媒体类型优先（图片/视频/语音/嵌入），否则文本。"""
+    for t in ("image", "video", "tts", "embedding"):
+        if t in types:
+            return t
+    return "text"

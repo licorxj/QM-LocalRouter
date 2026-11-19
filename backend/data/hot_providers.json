@@ -88,12 +88,12 @@
     "homepage": "https://cavoti.com/register?aff=4VLMN2NN445Y"
   },
   {
-    "name": "腾讯云混元",
+    "name": "魔搭",
     "protocol": "openai",
     "base_url": "https://api.hunyuan.cloud.tencent.com/v1",
-    "description": "混元大模型，腾讯云出品",
-    "icon_keyword": "tencent hunyuan",
-    "homepage": "https://cloud.tencent.com/product/hunyuan"
+    "description": "魔搭社区开源模型调用，每日登录送200点，约200次调用",
+    "icon_keyword": "ModelScope",
+    "homepage": "https://www.modelscope.cn/register?inviteCode=licor&invitorName=licorxu"
   },
   {
     "name": "百度千帆 (ERNIE)",

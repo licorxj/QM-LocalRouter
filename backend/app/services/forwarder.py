@@ -1,5 +1,6 @@
 import time
 import json
+import asyncio
 from typing import Any, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.provider import Provider
@@ -7,6 +8,7 @@ from app.models.api_key import ApiKey
 from app.models.model import Model
 from app.models.strategy import Strategy, StrategyRule
 from app.models.log import RequestLog
+from app.database import async_session
 from app.utils.crypto import decrypt_value
 from app.utils import ssl_relax
 from app.utils.protocol_adapter import (
@@ -17,6 +19,40 @@ import httpx
 
 # LiteLLM 适配器导入 (延迟导入避免循环依赖)
 _litellm_adapter = None
+
+# 后台日志任务的强引用集（防止 Task 被 GC），完成即移除
+_bg_tasks: set = set()
+
+
+def _broadcast_log(log_id: int, rid: str | None = None) -> None:
+    """新日志落库后通知可视化监控页（monitor 事件总线）。
+
+    延迟导入避免 monitor <-> forwarder 循环依赖；广播失败静默，不影响主链路。
+    """
+    try:
+        from app.routers.monitor import broadcast_log
+        broadcast_log(log_id, rid)
+    except Exception:
+        pass
+
+
+def _broadcast_start(rid, client_ip, strategy_id: int,
+                     provider_id: int, model) -> None:
+    """请求进行中事件：选定上游后、发起请求前广播，供监控页点亮脉冲。"""
+    try:
+        from app.routers.monitor import broadcast_start
+        broadcast_start({
+            "rid": rid,
+            "phase": "start",
+            "client_ip": client_ip,
+            "strategy_id": strategy_id,
+            "provider_id": provider_id,
+            "model": model,
+        })
+    except Exception:
+        pass
+
+
 def _get_litellm_adapter():
     global _litellm_adapter
     if _litellm_adapter is None:
@@ -302,6 +338,8 @@ class Forwarder:
         provider: Provider, model: Model, api_key: ApiKey,
         request_body: dict, is_stream: bool,
     ) -> httpx.Response:
+        # 监控用的内部键不参与上游请求体（保留 _client_format/_raw_body 供透传判定）
+        request_body = {k: v for k, v in request_body.items() if k != "_client_ip"}
         real_key = await self._real_key(api_key)
         protocol = provider.protocol
         base_url = provider.base_url.rstrip("/")
@@ -309,6 +347,16 @@ class Forwarder:
         await self._ensure_local_gateway(base_url)
         extra_headers = upstream.get("extra_headers") or {}
         responses_style = upstream.get("upstream_style") == "responses"
+
+        # 插件账号：凭据保存在引擎内，经 /operation proxy 中继（OpenAI 格式进出）
+        plugin_ref = self._plugin_account_ref(api_key)
+        if plugin_ref:
+            return await self._forward_plugin_proxy(plugin_ref, model, request_body,
+                                                    is_stream, strategy.timeout or 180)
+
+        # EchoBird 原生账号（echo: 前缀）：qoder/qodercn 走专用网关适配器
+        if (api_key.alias or "").startswith("echo:") and api_key.oauth_profile in ("qoder", "qodercn"):
+            return await self._forward_qoder_echo(api_key, model, request_body, is_stream)
 
         if str(upstream.get("profile_id", "")).startswith("workbuddy"):
             return await self._forward_workbuddy(provider, model, api_key, real_key,
@@ -332,8 +380,8 @@ class Forwarder:
         if plan:
             upstream_body, url, headers = plan
             timeout = strategy.timeout or 120
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-                return await client.post(url, headers=headers, json=upstream_body)
+            client = ssl_relax.get_client(url)
+            return await client.post(url, headers=headers, json=upstream_body, timeout=timeout)
 
         # Build upstream request based on protocol
         if responses_style:
@@ -389,6 +437,81 @@ class Forwarder:
             "POST", url, timeout=timeout, headers=headers, json=upstream_body
         )
 
+    async def _forward_qoder_echo(self, api_key: ApiKey, model: Model,
+                                  request_body: dict, is_stream: bool) -> httpx.Response:
+        """EchoBird Qoder 账号转发：凭据 blob 在 oauth_refresh，网关协议见 qoder_proxy。"""
+        from app.services import qoder_proxy
+        from app.utils.crypto import decrypt_value
+        import json as _json
+        platform = api_key.oauth_profile
+        try:
+            creds = _json.loads(decrypt_value(api_key.oauth_refresh)) if api_key.oauth_refresh else {}
+        except Exception:
+            creds = {}
+        upstream_body = {**request_body, "model": model.model_id}
+        upstream_body.pop("conversation_id", None)
+        upstream_body["stream"] = bool(is_stream)
+        try:
+            status, content_type, content = await qoder_proxy.call_model(
+                creds, platform, model.model_id, upstream_body,
+                timeout=180)
+        except Exception as e:
+            from app.services.qoder_proxy import QoderError
+            message = getattr(e, "message", None) or str(e)[:250]
+            status_code = getattr(e, "status", 502) or 502
+            if isinstance(e, QoderError) and e.login_required:
+                status_code = 401
+            return httpx.Response(status_code=status_code,
+                                  content=json.dumps({"error": {"message": message, "type": "upstream_error"}},
+                                                     ensure_ascii=False).encode(),
+                                  headers={"content-type": "application/json"})
+        if status >= 400 and b"{" in content[:1] or (status >= 400 and content[:1] not in (b"{", b"e", b"d")):
+            # 上游错误 JSON 透传
+            pass
+        return httpx.Response(status_code=status if status >= 200 else 200,
+                              content=content, headers={"content-type": content_type})
+
+    def _plugin_account_ref(self, api_key: ApiKey) -> tuple[str, str] | None:
+        """alias="plugin:{account_id}" 的虚拟键 → (platform, account_id)；非插件账号返回 None。"""
+        alias = (api_key.alias or "")
+        if not alias.startswith("plugin:") or not api_key.oauth_profile:
+            return None
+        account_id = alias[len("plugin:"):].strip()
+        if not account_id:
+            return None
+        return api_key.oauth_profile, account_id
+
+    async def _forward_plugin_proxy(self, ref: tuple[str, str], model: Model,
+                                    request_body: dict, is_stream: bool,
+                                    timeout: int) -> httpx.Response:
+        """插件账号转发：把 OpenAI 请求包进引擎 proxy 操作，原样中继其响应。
+
+        引擎侧（echobird-plugin operations.rs "proxy"）以 OpenAI 格式进出：
+        非流式返回 JSON，流式返回 OpenAI SSE。
+        """
+        import httpx as _httpx
+        from app.services import plugin_host
+        platform, account_id = ref
+        upstream_body = {**request_body, "model": model.model_id}
+        upstream_body.pop("conversation_id", None)
+        if is_stream:
+            upstream_body["stream"] = True
+        params = {"accountId": account_id, "model": model.model_id, "body": upstream_body}
+        try:
+            status, content_type, content = await plugin_host.raw_operation(
+                platform, "proxy", params, timeout=timeout)
+        except Exception as e:
+            message = str(getattr(e, "message", e))[:300]
+            return _httpx.Response(status_code=502, content=json.dumps(
+                {"error": {"message": f"插件代理调用失败: {message}", "type": "upstream_error"}},
+                ensure_ascii=False).encode(), headers={"content-type": "application/json"})
+        if status >= 400 and "application/json" in content_type:
+            # 引擎错误（含上游 4xx/5xx 包装）原样透传
+            pass
+        headers = {"content-type": content_type}
+        return _httpx.Response(status_code=status if status >= 200 else 200,
+                               content=content, headers=headers)
+
     async def _forward_workbuddy(self, provider: Provider, model: Model, api_key: ApiKey,
                                  real_key: str, request_body: dict, timeout: int) -> httpx.Response:
         """WorkBuddy 非流式：上游流式返回 -> 本地聚合成 chat.completion。"""
@@ -423,12 +546,87 @@ class Forwarder:
         request_body: dict,
     ):
         """Yield SSE chunks from upstream, translated to OpenAI format."""
+        request_body = {k: v for k, v in request_body.items() if k != "_client_ip"}
         real_key = await self._real_key(api_key)
         protocol = provider.protocol
         base_url = provider.base_url.rstrip("/")
         upstream = self._oauth_upstream(api_key) or {}
         await self._ensure_local_gateway(base_url)
         extra_headers = upstream.get("extra_headers") or {}
+
+        # EchoBird 原生账号（echo: 前缀）：qoder/qodercn 走专用网关适配器
+        if (api_key.alias or "").startswith("echo:") and api_key.oauth_profile in ("qoder", "qodercn"):
+            resp = await self._forward_qoder_echo(api_key, model, request_body, True)
+            content_type = resp.headers.get("content-type", "")
+            body_text = resp.content.decode("utf-8", "replace")
+            # 登录失效 / 额度耗尽等业务错误：_forward_qoder_echo 返回 4xx + JSON error body。
+            # 必须以标准 error 帧下发，否则前端读 choices 为空，表现为"请求成功但无回复"。
+            error_msg = ""
+            if resp.status_code >= 400:
+                try:
+                    err_obj = json.loads(body_text)
+                    error_msg = str((err_obj.get("error") or {}).get("message") or err_obj.get("message") or "")[:300]
+                except (ValueError, TypeError):
+                    error_msg = body_text[:300]
+            elif '"error"' in body_text[:500] and '"choices"' not in body_text[:500]:
+                try:
+                    err_obj = json.loads(body_text.strip())
+                    error_msg = str((err_obj.get("error") or {}).get("message") or err_obj.get("message") or "")[:300]
+                except (ValueError, TypeError):
+                    pass
+            if error_msg:
+                yield "data: " + json.dumps({"error": {"message": error_msg}}, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            if "text/event-stream" not in content_type:
+                yield "data: " + body_text.strip() + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            # Qoder 网关返回的是「裸 JSON 帧」（每行一个 {"choices":...}，用单个 \n 分隔），
+            # 不是标准 SSE。必须逐行补上 "data: " 前缀，否则前端按 startsWith('data: ')
+            # 过滤会把全部内容帧丢弃，表现为「日志 200 成功但对话框无内容」。
+            done_sent = False
+            for raw_line in body_text.replace("\r\n", "\n").split("\n"):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    continue
+                # 上游统计帧（data:{"firstTokenDuration":...}）非内容，跳过
+                if line.startswith("data:{") and "firstTokenDuration" in line:
+                    continue
+                if line == "[DONE]" or line == "data: [DONE]" or line == "data:[DONE]":
+                    if not done_sent:
+                        yield "data: [DONE]\n\n"
+                        done_sent = True
+                    continue
+                if line.startswith("data:"):
+                    yield line + "\n\n"
+                else:
+                    yield "data: " + line + "\n\n"
+            if not done_sent:
+                yield "data: [DONE]\n\n"
+            return
+
+        # 插件账号：经引擎 proxy 中继，上游返回 OpenAI SSE，按行转发
+        plugin_ref = self._plugin_account_ref(api_key)
+        if plugin_ref:
+            resp = await self._forward_plugin_proxy(plugin_ref, model, request_body,
+                                                    True, strategy.timeout or 180)
+            content_type = resp.headers.get("content-type", "")
+            body = resp.content.decode("utf-8", "replace")
+            if "text/event-stream" not in content_type:
+                # 引擎直接回了 JSON（如错误）：转成一条 SSE 事件
+                yield "data: " + body.strip() + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            for block in body.replace("\r\n", "\n").split("\n\n"):
+                block = block.strip()
+                if block:
+                    yield block + "\n\n"
+            if "data: [DONE]" not in body:
+                yield "data: [DONE]\n\n"
+            return
 
         if str(upstream.get("profile_id", "")).startswith("workbuddy"):
             async for line in self._forward_workbuddy_stream(
@@ -464,16 +662,16 @@ class Forwarder:
         if plan:
             upstream_body, url, headers = plan
             timeout = strategy.timeout or 120
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-                async with client.stream("POST", url, headers=headers, json=upstream_body) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        raise httpx.HTTPStatusError(
-                            f"Upstream error {resp.status_code}", request=resp.request, response=resp
-                        )
-                    async for line in resp.aiter_lines():
-                        # 逐行原样输出：SSE 帧（claude/openai）与裸 JSON 行（gemini）都保持原样
-                        yield line + "\n"
+            client = ssl_relax.get_client(url)
+            async with client.stream("POST", url, headers=headers, json=upstream_body, timeout=timeout) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    raise httpx.HTTPStatusError(
+                        f"Upstream error {resp.status_code}", request=resp.request, response=resp
+                    )
+                async for line in resp.aiter_lines():
+                    # 逐行原样输出：SSE 帧（claude/openai）与裸 JSON 行（gemini）都保持原样
+                    yield line + "\n"
             return
 
         if upstream.get("upstream_style") == "responses":
@@ -485,24 +683,24 @@ class Forwarder:
             timeout = strategy.timeout or 120
             completion_id = f"chatcmpl-{int(time.time()*1000)}"
 
-            async with ssl_relax.client(timeout, url) as client:
-                async with client.stream("POST", url, headers=headers, json=upstream_body) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        raise httpx.HTTPStatusError(f"Upstream error {resp.status_code}", request=resp.request, response=resp)
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:].strip()
-                            if data_str == "[DONE]":
-                                yield 'data: [DONE]\n\n'
-                                break
-                            try:
-                                event = json.loads(data_str)
-                            except Exception:
-                                continue
-                            chunk = responses_stream_chunk_to_chat(event, model.model_id, completion_id)
-                            if chunk:
-                                yield 'data: ' + json.dumps(chunk, ensure_ascii=False) + '\n\n'
+            client = ssl_relax.get_client(url)
+            async with client.stream("POST", url, headers=headers, json=upstream_body, timeout=timeout) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    raise httpx.HTTPStatusError(f"Upstream error {resp.status_code}", request=resp.request, response=resp)
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            yield 'data: [DONE]\n\n'
+                            break
+                        try:
+                            event = json.loads(data_str)
+                        except Exception:
+                            continue
+                        chunk = responses_stream_chunk_to_chat(event, model.model_id, completion_id)
+                        if chunk:
+                            yield 'data: ' + json.dumps(chunk, ensure_ascii=False) + '\n\n'
             return
 
         if protocol == "openai" or protocol == "custom":
@@ -537,68 +735,68 @@ class Forwarder:
         timeout = strategy.timeout or 120
         completion_id = f"chatcmpl-{int(time.time()*1000)}"
 
-        async with ssl_relax.client(timeout, url) as client:
-            async with client.stream("POST", url, headers=headers, json=upstream_body) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    raise httpx.HTTPStatusError(
-                        f"Upstream error {resp.status_code}", request=resp.request, response=resp
-                    )
+        client = ssl_relax.get_client(url)
+        async with client.stream("POST", url, headers=headers, json=upstream_body, timeout=timeout) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                raise httpx.HTTPStatusError(
+                    f"Upstream error {resp.status_code}", request=resp.request, response=resp
+                )
 
-                if protocol == "openai" or protocol == "custom":
-                    async for line in resp.aiter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:].strip()
-                            if data_str == "[DONE]":
-                                yield "data: [DONE]\n\n"
-                                break
-                            yield f"data: {data_str}\n\n"
+            if protocol == "openai" or protocol == "custom":
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            yield "data: [DONE]\n\n"
+                            break
+                        yield f"data: {data_str}\n\n"
 
-                elif protocol == "claude":
-                    import json as _json
-                    current_event = ""
-                    async for line in resp.aiter_lines():
-                        if line.startswith("event: "):
-                            current_event = line[7:].strip()
-                        elif line.startswith("data: "):
-                            data_str = line[6:].strip()
+            elif protocol == "claude":
+                import json as _json
+                current_event = ""
+                async for line in resp.aiter_lines():
+                    if line.startswith("event: "):
+                        current_event = line[7:].strip()
+                    elif line.startswith("data: "):
+                        data_str = line[6:].strip()
+                        try:
+                            chunk = _json.loads(data_str)
+                            chunk["type"] = current_event
+                            from app.utils.protocol_adapter import claude_stream_chunk_to_openai
+                            openai_chunk = claude_stream_chunk_to_openai(chunk, model.model_id, completion_id)
+                            if openai_chunk:
+                                yield f"data: {_json.dumps(openai_chunk)}\n\n"
+                        except _json.JSONDecodeError:
+                            pass
+
+            elif protocol == "gemini":
+                import json as _json
+                buffer = ""
+                depth = 0
+                async for raw_line in resp.aiter_lines():
+                    stripped = raw_line.strip()
+                    if stripped == "[":
+                        continue
+                    if stripped == "]":
+                        continue
+                    if stripped.startswith("{"):
+                        buffer = stripped
+                        depth = stripped.count("{") - stripped.count("}")
+                    elif buffer:
+                        buffer += stripped
+                        depth += stripped.count("{") - stripped.count("}")
+                        if depth <= 0:
                             try:
-                                chunk = _json.loads(data_str)
-                                chunk["type"] = current_event
-                                from app.utils.protocol_adapter import claude_stream_chunk_to_openai
-                                openai_chunk = claude_stream_chunk_to_openai(chunk, model.model_id, completion_id)
+                                chunk = _json.loads(buffer)
+                                from app.utils.protocol_adapter import gemini_stream_chunk_to_openai
+                                openai_chunk = gemini_stream_chunk_to_openai(chunk, model.model_id, completion_id)
                                 if openai_chunk:
                                     yield f"data: {_json.dumps(openai_chunk)}\n\n"
                             except _json.JSONDecodeError:
                                 pass
-
-                elif protocol == "gemini":
-                    import json as _json
-                    buffer = ""
-                    depth = 0
-                    async for raw_line in resp.aiter_lines():
-                        stripped = raw_line.strip()
-                        if stripped == "[":
-                            continue
-                        if stripped == "]":
-                            continue
-                        if stripped.startswith("{"):
-                            buffer = stripped
-                            depth = stripped.count("{") - stripped.count("}")
-                        elif buffer:
-                            buffer += stripped
-                            depth += stripped.count("{") - stripped.count("}")
-                            if depth <= 0:
-                                try:
-                                    chunk = _json.loads(buffer)
-                                    from app.utils.protocol_adapter import gemini_stream_chunk_to_openai
-                                    openai_chunk = gemini_stream_chunk_to_openai(chunk, model.model_id, completion_id)
-                                    if openai_chunk:
-                                        yield f"data: {_json.dumps(openai_chunk)}\n\n"
-                                except _json.JSONDecodeError:
-                                    pass
-                                buffer = ""
-                                depth = 0
+                            buffer = ""
+                            depth = 0
 
     async def send_test_request(self, strategy: Strategy, rule: StrategyRule) -> dict:
         from app.services.balancer import Balancer
@@ -628,13 +826,47 @@ class Forwarder:
         except Exception as e:
             return {"success": False, "message": str(e)[:200]}
 
+    async def send_test_request_strategy_rule(self, strategy_id: int, rule: StrategyRule) -> dict:
+        """按单条规则走真实转发链路探测（选 Key、协议适配与正式对话一致）。"""
+        from app.services.balancer import Balancer
+
+        provider = await self.db.get(Provider, rule.provider_id)
+        model = await self.db.get(Model, rule.model_id)
+        if not provider or not model:
+            return {"success": False, "message": "Provider or model not found"}
+
+        balancer = Balancer(self.db)
+        api_key = await balancer.select_key(provider.id)
+        if not api_key:
+            return {"success": False, "message": "No active API key"}
+
+        strategy = await self.db.get(Strategy, strategy_id)
+        if not strategy:
+            return {"success": False, "message": "Strategy not found"}
+
+        test_body = {
+            "model": model.model_id,
+            "messages": [{"role": "user", "content": "Say 'ok' in one word."}],
+            "max_tokens": 10,
+        }
+
+        try:
+            resp = await self.forward(strategy, rule, provider, model, api_key, test_body, is_stream=False)
+            if 200 <= resp.status_code < 300:
+                return {"success": True, "message": "Connection OK", "provider": provider.name, "model": model.model_id}
+            return {"success": False, "message": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)[:200]}
+
     async def log_request(
         self, strategy_id: int, provider_id: int, api_key_id: int,
         model_used: str, request_body: dict, status_code: int,
         latency_ms: int, is_stream: bool, error_message: str | None,
         prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0,
+        rid: str | None = None,
     ):
         log = RequestLog(
+            client_ip=str(request_body.get("_client_ip") or "")[:64],
             strategy_id=strategy_id,
             provider_id=provider_id,
             api_key_id=api_key_id,
@@ -650,6 +882,46 @@ class Forwarder:
         )
         self.db.add(log)
         await self.db.commit()
+        _broadcast_log(log.id, rid)
+
+    def log_request_bg(self, *args, **kwargs) -> None:
+        """后台写请求日志（独立 session，不阻塞响应返回）。
+
+        非流式路径原先在返回响应前同步 INSERT+commit，WAL 后虽快，但高并发
+        时写锁仍会排队；日志非关键路径，改由后台任务落库，失败静默。
+        流式路径在流结束后调用 await 版本即可，不受影响。
+        """
+        entry = dict(zip(
+            ("strategy_id", "provider_id", "api_key_id", "model_used", "request_body",
+             "status_code", "latency_ms", "is_stream", "error_message",
+             "prompt_tokens", "completion_tokens", "total_tokens"),
+            args,
+        )) if args else {}
+        entry.update(kwargs)
+        rid = entry.pop("rid", None)
+        # 客户端 IP 由入口层塞进 request_body["_client_ip"]，落库时抽到独立列
+        client_ip = ""
+        if isinstance(entry.get("request_body"), dict):
+            client_ip = str(entry["request_body"].get("_client_ip") or "")[:64]
+        entry["request_body"] = json.dumps(entry.get("request_body") or {})[:2000]
+        entry["client_ip"] = client_ip
+
+        async def _write():
+            try:
+                async with async_session() as session:
+                    log_row = RequestLog(**entry)
+                    session.add(log_row)
+                    await session.commit()
+                    _broadcast_log(log_row.id, rid)
+            except Exception:
+                pass
+
+        try:
+            task = asyncio.create_task(_write())
+        except RuntimeError:
+            return  # 无运行中事件循环（脚本场景）：放弃这条日志
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
 
 
     async def forward_embeddings(
@@ -665,12 +937,12 @@ class Forwarder:
             url = f"{base_url}/embeddings"
             headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
             upstream_body = {"model": model.model_id, "input": input_texts}
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(url, headers=headers, json=upstream_body)
-                if resp.status_code != 200:
-                    raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
-                data = resp.json()
-                return [item["embedding"] for item in data.get("data", [])]
+            client = ssl_relax.get_client(url)
+            resp = await client.post(url, headers=headers, json=upstream_body, timeout=120)
+            if resp.status_code != 200:
+                raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
+            data = resp.json()
+            return [item["embedding"] for item in data.get("data", [])]
 
         elif protocol == "gemini":
             url = f"{base_url}/models/{model.model_id}:batchEmbedContents?key={real_key}"
@@ -681,12 +953,12 @@ class Forwarder:
                     for t in input_texts
                 ]
             }
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(url, headers=headers, json=upstream_body)
-                if resp.status_code != 200:
-                    raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
-                data = resp.json()
-                return [e["values"] for e in data.get("embeddings", [])]
+            client = ssl_relax.get_client(url)
+            resp = await client.post(url, headers=headers, json=upstream_body, timeout=120)
+            if resp.status_code != 200:
+                raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
+            data = resp.json()
+            return [e["values"] for e in data.get("embeddings", [])]
 
         raise ValueError(f"Embeddings are not supported for protocol '{protocol}' (Claude has no embeddings API)")
 
@@ -703,15 +975,16 @@ class Forwarder:
             url = f"{base_url}/audio/transcriptions"
             headers = {"Authorization": f"Bearer {real_key}"}
             data = {**fields, "model": model.model_id}
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(
-                    url, headers=headers,
-                    files={"file": (filename, file_bytes, content_type)},
-                    data=data,
-                )
-                if resp.status_code != 200:
-                    raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
-                return resp.json()
+            client = ssl_relax.get_client(url)
+            resp = await client.post(
+                url, headers=headers,
+                files={"file": (filename, file_bytes, content_type)},
+                data=data,
+                timeout=120,
+            )
+            if resp.status_code != 200:
+                raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
+            return resp.json()
 
         elif protocol == "gemini":
             # Audio understanding via generateContent with inline audio data
@@ -727,14 +1000,14 @@ class Forwarder:
                     ]
                 }]
             }
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(url, headers=headers, json=upstream_body)
-                if resp.status_code != 200:
-                    raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
-                data = resp.json()
-                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                text = "".join(p.get("text", "") for p in parts)
-                return {"text": text}
+            client = ssl_relax.get_client(url)
+            resp = await client.post(url, headers=headers, json=upstream_body, timeout=120)
+            if resp.status_code != 200:
+                raise ValueError(f"Upstream error {resp.status_code}: {resp.text[:300]}")
+            data = resp.json()
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            text = "".join(p.get("text", "") for p in parts)
+            return {"text": text}
 
         raise ValueError(f"Audio transcription is not supported for protocol '{protocol}' (Claude has no transcription API)")
 
@@ -776,9 +1049,9 @@ class Forwarder:
         else:
             raise ValueError(f"Unsupported protocol for image generation: {protocol}")
 
-        async with ssl_relax.client(120, url) as client:
-            resp = await client.post(url, headers=headers, json=upstream_body)
-            return resp
+        client = ssl_relax.get_client(url)
+        resp = await client.post(url, headers=headers, json=upstream_body, timeout=120)
+        return resp
 
     # ============================================================
     # TTS Forwarding
@@ -801,31 +1074,31 @@ class Forwarder:
             url = f"{base_url}/audio/speech"
             headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
             upstream_body = {**request_body, "model": model.model_id}
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(url, headers=headers, json=upstream_body)
-                content_type = resp.headers.get("content-type", "audio/mpeg")
-                return resp, content_type
+            client = ssl_relax.get_client(url)
+            resp = await client.post(url, headers=headers, json=upstream_body, timeout=120)
+            content_type = resp.headers.get("content-type", "audio/mpeg")
+            return resp, content_type
 
         elif protocol == "gemini":
             from app.utils.protocol_adapter import openai_tts_to_gemini, gemini_tts_response_to_openai_audio
             gemini_body = openai_tts_to_gemini({**request_body, "model": model.model_id})
             url = f"{base_url}/models/{model.model_id}:generateContent?key={real_key}"
             headers = {"Content-Type": "application/json"}
-            async with ssl_relax.client(120, url) as client:
-                resp = await client.post(url, headers=headers, json=gemini_body)
-                if resp.status_code == 200:
-                    audio_bytes = gemini_tts_response_to_openai_audio(resp.json())
-                    if audio_bytes:
-                        # Create a fake response with audio bytes
-                        from starlette.responses import Response
-                        # Return raw audio bytes and content_type
-                        fake_resp = httpx.Response(
-                            status_code=200,
-                            content=audio_bytes,
-                            headers={"content-type": "audio/wav"},
-                        )
-                        return fake_resp, "audio/wav"
-                return resp, "application/json"
+            client = ssl_relax.get_client(url)
+            resp = await client.post(url, headers=headers, json=gemini_body, timeout=120)
+            if resp.status_code == 200:
+                audio_bytes = gemini_tts_response_to_openai_audio(resp.json())
+                if audio_bytes:
+                    # Create a fake response with audio bytes
+                    from starlette.responses import Response
+                    # Return raw audio bytes and content_type
+                    fake_resp = httpx.Response(
+                        status_code=200,
+                        content=audio_bytes,
+                        headers={"content-type": "audio/wav"},
+                    )
+                    return fake_resp, "audio/wav"
+            return resp, "application/json"
 
         elif protocol == "claude":
             raise ValueError("Anthropic does not support TTS")
@@ -868,9 +1141,9 @@ class Forwarder:
             headers = {"Authorization": f"Bearer {real_key}", "Content-Type": "application/json"}
             upstream_body = {**request_body, "model": model.model_id}
 
-        async with ssl_relax.client(300, url) as client:
-            resp = await client.post(url, headers=headers, json=upstream_body)
-            return resp
+        client = ssl_relax.get_client(url)
+        resp = await client.post(url, headers=headers, json=upstream_body, timeout=300)
+        return resp
 
     async def forward_video_get(
         self, provider: Provider, api_key: ApiKey,
@@ -891,9 +1164,9 @@ class Forwarder:
             url = f"{base_url}/videos/{task_id}"
             headers = {"Authorization": f"Bearer {real_key}"}
 
-        async with ssl_relax.client(30, url) as client:
-            resp = await client.get(url, headers=headers)
-            return resp
+        client = ssl_relax.get_client(url)
+        resp = await client.get(url, headers=headers, timeout=30)
+        return resp
 
     # ============================================================
     # LiteLLM 转发方法

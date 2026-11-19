@@ -16,10 +16,41 @@ from app.schemas.schemas import ModelCreate, ModelUpdate, ModelOut, BatchTestRes
 
 from app.utils.crypto import decrypt_value
 
-from app.utils.known_models import get_known_model_params, detect_model_type
+from app.utils.known_models import (
+    get_known_model_params,
+    infer_model_types,
+    infer_model_capabilities,
+    normalize_model_types,
+    primary_model_type,
+)
 
+import asyncio
 import time
 import httpx
+
+
+def _type_fields(model_id: str, raw: dict | None = None, is_multimodal: bool = False) -> dict:
+    """统一的「类型 + 能力」字段计算。
+
+    types 取上游声明（多类型并列）→ 已知模型库 → 模型名启发式 → 文本兜底；
+    model_type 仍是路由主类型（媒体类型优先），model_types 仅用于展示。
+    """
+    known = get_known_model_params(model_id) or {}
+    types = infer_model_types(model_id, raw)
+    known_type = known.get("model_type")
+    if known_type and known_type not in types:
+        types = normalize_model_types([known_type] + types)
+    caps = infer_model_capabilities(
+        model_id, raw, bool(is_multimodal or known.get("is_multimodal"))
+    )
+    return {
+        "model_types": ",".join(types),
+        "model_type": primary_model_type(types),
+        "is_multimodal": caps["supports_vision"],
+        "supports_vision": caps["supports_vision"],
+        "supports_search": caps["supports_search"],
+        "supports_tools": caps["supports_tools"],
+    }
 
 
 async def _workbuddy_catalog(provider: Provider, key_obj: ApiKey, db: AsyncSession):
@@ -46,13 +77,12 @@ async def _workbuddy_catalog(provider: Provider, key_obj: ApiKey, db: AsyncSessi
         out.append({
             "model_id": item["model_id"],
             "display_name": known.get("display_name") or item.get("display_name") or item["model_id"],
-            "is_multimodal": known.get("is_multimodal", bool(item.get("is_multimodal"))),
-            "model_type": known.get("model_type", "text"),
             "context_window": known.get("context_window") or item.get("context_window"),
             "temperature": known.get("temperature"),
             "price_input": known.get("price_input"),
             "price_output": known.get("price_output"),
             "already_added": False,
+            **_type_fields(item["model_id"], item, bool(item.get("is_multimodal"))),
         })
     return out
 
@@ -81,13 +111,12 @@ async def _opencode_catalog(provider: Provider, key_obj: ApiKey):
         out.append({
             "model_id": model_id,
             "display_name": known.get("display_name") or item.get("name") or model_id,
-            "is_multimodal": known.get("is_multimodal", False),
-            "model_type": known.get("model_type", "text"),
             "context_window": known.get("context_window"),
             "temperature": known.get("temperature"),
             "price_input": known.get("price_input"),
             "price_output": known.get("price_output"),
             "already_added": False,
+            **_type_fields(model_id, item),
         })
     return out
 
@@ -116,13 +145,12 @@ async def _cline_catalog(provider: Provider, key_obj: ApiKey):
         out.append({
             "model_id": model_id,
             "display_name": known.get("display_name") or item.get("name") or model_id,
-            "is_multimodal": known.get("is_multimodal", False),
-            "model_type": known.get("model_type", "text"),
             "context_window": known.get("context_window"),
             "temperature": known.get("temperature"),
             "price_input": known.get("price_input"),
             "price_output": known.get("price_output"),
             "already_added": False,
+            **_type_fields(model_id, item),
         })
     return out
 
@@ -142,13 +170,12 @@ async def _zcode_catalog(provider: Provider, key_obj: ApiKey):
         out.append({
             "model_id": model_id,
             "display_name": known.get("display_name") or item.get("display_name") or model_id,
-            "is_multimodal": known.get("is_multimodal", bool(item.get("is_multimodal"))),
-            "model_type": known.get("model_type", "text"),
             "context_window": known.get("context_window") or item.get("context_window"),
             "temperature": known.get("temperature"),
             "price_input": known.get("price_input"),
             "price_output": known.get("price_output"),
             "already_added": False,
+            **_type_fields(model_id, item, bool(item.get("is_multimodal"))),
         })
     return out
 
@@ -266,10 +293,9 @@ async def fetch_models(provider_id: int, db: AsyncSession = Depends(get_db)):
 
     try:
         if provider.protocol in ("openai", "custom"):
-            headers = {"Content-Type": "application/json"}
-            # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
-            if key_obj and str(provider.auth_type or "") != "none":
-                headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
+            # OAuth key（如 Copilot）：先刷新短效 token 并合并平台必需指纹头
+            from app.services.oauth_providers import oauth_probe_headers
+            headers = await oauth_probe_headers(db, key_obj, provider, {"Content-Type": "application/json"})
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.get(f"{provider.base_url.rstrip('/')}/models", headers=headers)
                 if resp.status_code == 200:
@@ -283,13 +309,12 @@ async def fetch_models(provider_id: int, db: AsyncSession = Depends(get_db)):
                         models_data.append({
                             "model_id": mid,
                             "display_name": known.get("display_name", mid),
-                            "is_multimodal": known.get("is_multimodal", False),
-                            "model_type": known.get("model_type", detect_model_type(mid)),
                             "context_window": known.get("context_window"),
                             "temperature": known.get("temperature"),
                             "price_input": known.get("price_input"),
                             "price_output": known.get("price_output"),
                             "already_added": mid in existing_ids,
+                            **_type_fields(mid, m),
                         })
 
         elif provider.protocol == "gemini":
@@ -312,13 +337,12 @@ async def fetch_models(provider_id: int, db: AsyncSession = Depends(get_db)):
                         models_data.append({
                             "model_id": name,
                             "display_name": known.get("display_name", display),
-                            "is_multimodal": known.get("is_multimodal", is_multi),
-                            "model_type": known.get("model_type", detect_model_type(name)),
                             "context_window": known.get("context_window", context),
                             "temperature": known.get("temperature"),
                             "price_input": known.get("price_input"),
                             "price_output": known.get("price_output"),
                             "already_added": name in existing_ids,
+                            **_type_fields(name, m, is_multi),
                         })
 
     except httpx.RequestError:
@@ -386,10 +410,6 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
 
                             "display_name": known.get("display_name", mid),
 
-                            "is_multimodal": known.get("is_multimodal", False),
-
-                            "model_type": known.get("model_type", detect_model_type(mid)),
-
                             "context_window": known.get("context_window"),
 
                             "temperature": known.get("temperature"),
@@ -397,6 +417,8 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
                             "price_input": known.get("price_input"),
 
                             "price_output": known.get("price_output"),
+
+                            **_type_fields(mid, m),
 
                         })
 
@@ -456,10 +478,6 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
 
                             "display_name": known.get("display_name", display),
 
-                            "is_multimodal": known.get("is_multimodal", is_multi),
-
-                            "model_type": known.get("model_type", detect_model_type(name)),
-
                             "context_window": known.get("context_window", context),
 
                             "temperature": known.get("temperature"),
@@ -467,6 +485,8 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
                             "price_input": known.get("price_input"),
 
                             "price_output": known.get("price_output"),
+
+                            **_type_fields(name, m, is_multi),
 
                         })
 
@@ -573,6 +593,28 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
 
                 m.price_output = md["price_output"]
 
+            if md.get("model_types"):
+
+                # 与已有类型取并集：同步只增不删，保留用户手动补充的类型
+                merged = normalize_model_types(
+                    normalize_model_types(m.model_types or m.model_type)
+                    + normalize_model_types(md["model_types"])
+                )
+
+                m.model_types = ",".join(merged)
+
+            if md.get("supports_vision"):
+
+                m.supports_vision = True
+
+            if md.get("supports_search"):
+
+                m.supports_search = True
+
+            if md.get("supports_tools"):
+
+                m.supports_tools = True
+
             created.append(m)
 
         else:
@@ -588,6 +630,14 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
                 is_multimodal=md.get("is_multimodal", False),
 
                 model_type=md.get("model_type", "text"),
+
+                model_types=md.get("model_types") or md.get("model_type", "text"),
+
+                supports_vision=md.get("supports_vision", False),
+
+                supports_search=md.get("supports_search", False),
+
+                supports_tools=md.get("supports_tools", False),
 
                 context_window=md.get("context_window"),
 
@@ -614,6 +664,157 @@ async def sync_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     return created
 
 
+# 批量测试并发上限：显著提速的同时避免一次性打爆上游触发限流
+MODEL_TEST_CONCURRENCY = 10
+
+
+async def _probe_model(
+    client: httpx.AsyncClient, provider: Provider, model: Model, key_obj: ApiKey | None
+) -> tuple[bool, str, int]:
+    """对单个模型发起一次最小请求探测（纯 HTTP，不碰数据库，可并发调用）。"""
+    start = time.time()
+    try:
+        if provider.protocol in ("openai", "custom"):
+            headers = {"Content-Type": "application/json"}
+            # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
+            if key_obj and str(provider.auth_type or "") != "none":
+                headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
+            payload = {
+                "model": model.model_id,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            }
+            resp = await client.post(
+                f"{provider.base_url.rstrip('/')}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            ok = resp.status_code == 200
+            msg = "OK" if ok else f"HTTP {resp.status_code}"
+
+        elif provider.protocol == "claude":
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": decrypt_value(key_obj.key_value) if key_obj else "",
+                "anthropic-version": "2023-06-01",
+            }
+            payload = {
+                "model": model.model_id,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            }
+            resp = await client.post(
+                f"{provider.base_url.rstrip('/')}/messages",
+                json=payload,
+                headers=headers,
+            )
+            ok = resp.status_code == 200
+            msg = "OK" if ok else f"HTTP {resp.status_code}"
+
+        elif provider.protocol == "gemini":
+            real_key = decrypt_value(key_obj.key_value) if key_obj else ""
+            payload = {
+                "contents": [{"parts": [{"text": "hi"}]}],
+                "generationConfig": {"maxOutputTokens": 1},
+            }
+            resp = await client.post(
+                f"{provider.base_url.rstrip('/')}/models/{model.model_id}:generateContent?key={real_key}",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            ok = resp.status_code == 200
+            msg = "OK" if ok else f"HTTP {resp.status_code}"
+
+        else:
+            ok = False
+            msg = "Unsupported protocol"
+
+    except Exception as e:
+        ok = False
+        msg = str(e)
+
+    return ok, msg, int((time.time() - start) * 1000)
+
+
+async def _probe_model_via_forwarder(db: AsyncSession, provider: Provider, model: Model, api_key: ApiKey) -> tuple[bool, str, int]:
+    """经 forwarder 真实推理路径探测单个模型（与单个测试按钮同链路）。
+
+    OAuth/CLI 车道（cline/opencode/zcode/workbuddy 等）的上游有专门适配器，
+    裸打 /chat/completions 会因缺少会话头、被剥离的 max_tokens 等差异而
+    全部失败（典型：cline 免费模型带 max_tokens 一律 500，见
+    services/cline.py 的 _build_body）。因此这类 key 必须复用真实路径探测。
+    db 传入请求级会话：OAuth key 临期时 _real_key 需经它刷新 token。
+    """
+    from app.services.forwarder import Forwarder
+    from app.models.strategy import Strategy, StrategyRule
+
+    pseudo_strategy = Strategy(
+        id=0, name=f"__testall__{provider.name}", lb_strategy="round_robin",
+        is_active=True, timeout=30, retry_count=0,
+        key_strategy=getattr(provider, "key_strategy", None) or "round_robin",
+    )
+    pseudo_rule = StrategyRule(
+        id=0, strategy_id=0, provider_id=provider.id,
+        model_id=model.id, priority=1, weight=1, is_active=True,
+    )
+    body = {
+        "model": model.model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    start = time.monotonic()
+    try:
+        forwarder = Forwarder(db)
+        resp = await forwarder.forward(pseudo_strategy, pseudo_rule, provider,
+                                       model, api_key, body, is_stream=False)
+        ok = 200 <= resp.status_code < 300
+        msg = "OK" if ok else f"HTTP {resp.status_code}"
+        return ok, msg, int((time.monotonic() - start) * 1000)
+    except Exception as e:
+        return False, str(e)[:200], int((time.monotonic() - start) * 1000)
+
+
+@router.post("/models/{model_id}/test", response_model=ModelTestResult)
+async def test_model(model_id: int, db: AsyncSession = Depends(get_db)):
+    """测试单个模型并把结果写回模型状态（列表里的独立测试按钮）。
+
+    走真实转发链路，与原前端直接打 /v1/chat/completions 的语义一致：
+    部分聚合桥接上游不支持 GET /models，用轻量探测会误判为失败。
+    成功后置 active 并清空 last_error。
+    """
+    model = await db.get(Model, model_id)
+    if not model:
+        raise HTTPException(404, "Model not found")
+    provider = await db.get(Provider, model.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+
+    key_result = await db.execute(
+        select(ApiKey).where(
+            ApiKey.provider_id == provider.id, ApiKey.status == "active"
+        ).limit(1)
+    )
+    key_obj = key_result.scalar_one_or_none()
+    if key_obj is None:
+        # 诊断用途：没有 active key 时也拿现有 key 探一次，避免全 key 冷却时无法测试
+        key_result = await db.execute(
+            select(ApiKey).where(ApiKey.provider_id == provider.id).limit(1)
+        )
+        key_obj = key_result.scalar_one_or_none()
+
+    if key_obj is None:
+        ok, msg, latency = False, "No API key for this provider", 0
+    else:
+        ok, msg, latency = await _probe_model_via_forwarder(db, provider, model, key_obj)
+
+    model.status = "active" if ok else "inactive"
+    model.last_error = "" if ok else msg[:500]
+    await db.commit()
+
+    return ModelTestResult(
+        model_id=model.model_id, success=ok, message=msg, latency_ms=latency
+    )
+
+
 @router.post("/providers/{provider_id}/models/test-all", response_model=BatchTestResult)
 async def test_all_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     provider = await db.get(Provider, provider_id)
@@ -633,92 +834,48 @@ async def test_all_models(provider_id: int, db: AsyncSession = Depends(get_db)):
     )
     key_obj = key_result.scalar_one_or_none()
 
+    # OAuth/CLI 车道 key 必须走 forwarder 真实路径（裸探测会被上游风控拒绝）；
+    # 普通 API key 上游继续用轻量裸探测（不产生真实推理消耗）
+    needs_forwarder = bool(key_obj and key_obj.oauth_profile)
+
+    # 并发探测所有模型（信号量限流），探测完成后统一回写数据库
+    sem = asyncio.Semaphore(MODEL_TEST_CONCURRENCY)
+
+    async def bounded_probe(model: Model):
+        async with sem:
+            if needs_forwarder:
+                return await _probe_model_via_forwarder(db, provider, model, key_obj)
+            return await _probe_model(client, provider, model, key_obj)
+
     results: list[ModelTestResult] = []
     success_count = 0
     failed_count = 0
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        for model in models:
-            start = time.time()
-            try:
-                if provider.protocol in ("openai", "custom"):
-                    headers = {"Content-Type": "application/json"}
-                    # auth_type="none" 的免密上游（OpenCode Zen / Kilo 免费池）不接受伪造 Bearer
-                    if key_obj and str(provider.auth_type or "") != "none":
-                        headers["Authorization"] = f"Bearer {decrypt_value(key_obj.key_value)}"
-                    payload = {
-                        "model": model.model_id,
-                        "messages": [{"role": "user", "content": "hi"}],
-                        "max_tokens": 1,
-                    }
-                    resp = await client.post(
-                        f"{provider.base_url.rstrip('/')}/chat/completions",
-                        json=payload,
-                        headers=headers,
-                    )
-                    ok = resp.status_code == 200
-                    msg = "OK" if ok else f"HTTP {resp.status_code}"
+    if needs_forwarder:
+        probes = await asyncio.gather(*(bounded_probe(m) for m in models))
+    else:
+        async with httpx.AsyncClient(timeout=15) as client:
+            probes = await asyncio.gather(*(bounded_probe(m) for m in models))
 
-                elif provider.protocol == "claude":
-                    headers = {
-                        "Content-Type": "application/json",
-                        "x-api-key": decrypt_value(key_obj.key_value) if key_obj else "",
-                        "anthropic-version": "2023-06-01",
-                    }
-                    payload = {
-                        "model": model.model_id,
-                        "messages": [{"role": "user", "content": "hi"}],
-                        "max_tokens": 1,
-                    }
-                    resp = await client.post(
-                        f"{provider.base_url.rstrip('/')}/messages",
-                        json=payload,
-                        headers=headers,
-                    )
-                    ok = resp.status_code == 200
-                    msg = "OK" if ok else f"HTTP {resp.status_code}"
-
-                elif provider.protocol == "gemini":
-                    real_key = decrypt_value(key_obj.key_value) if key_obj else ""
-                    payload = {
-                        "contents": [{"parts": [{"text": "hi"}]}],
-                        "generationConfig": {"maxOutputTokens": 1},
-                    }
-                    resp = await client.post(
-                        f"{provider.base_url.rstrip('/')}/models/{model.model_id}:generateContent?key={real_key}",
-                        json=payload,
-                        headers={"Content-Type": "application/json"},
-                    )
-                    ok = resp.status_code == 200
-                    msg = "OK" if ok else f"HTTP {resp.status_code}"
-
-                else:
-                    ok = False
-                    msg = "Unsupported protocol"
-
-            except Exception as e:
-                ok = False
-                msg = str(e)
-
-            latency = int((time.time() - start) * 1000)
-            results.append(ModelTestResult(
-                model_id=model.model_id,
-                success=ok,
-                message=msg,
-                latency_ms=latency,
-            ))
-            db_model = model_map.get(model.model_id)
-            if db_model:
-                if ok:
-                    db_model.status = "active"
-                    db_model.last_error = ""
-                else:
-                    db_model.status = "inactive"
-                    db_model.last_error = msg[:500]
+    for model, (ok, msg, latency) in zip(models, probes):
+        results.append(ModelTestResult(
+            model_id=model.model_id,
+            success=ok,
+            message=msg,
+            latency_ms=latency,
+        ))
+        db_model = model_map.get(model.model_id)
+        if db_model:
             if ok:
-                success_count += 1
+                db_model.status = "active"
+                db_model.last_error = ""
             else:
-                failed_count += 1
+                db_model.status = "inactive"
+                db_model.last_error = msg[:500]
+        if ok:
+            success_count += 1
+        else:
+            failed_count += 1
 
     await db.commit()
 

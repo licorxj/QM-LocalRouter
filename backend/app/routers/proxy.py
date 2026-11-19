@@ -29,6 +29,41 @@ router = APIRouter(tags=["proxy"], dependencies=[Depends(verify_client_auth)])
 alias_router = APIRouter(tags=["proxy-alias"])
 
 
+def _client_ip_of(request: Request) -> str:
+    """Best effort: return IP:port so local clients are distinguishable.
+
+    Port is included so multiple local clients (all 127.0.0.1) can be told apart.
+    Reverse-proxy headers usually carry no port; keep them as-is when present.
+    """
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    real = request.headers.get("x-real-ip", "").strip()
+    if real:
+        return real
+    client = request.client
+    if not client:
+        return ""
+    host = client.host or ""
+    port = client.port
+    return f"{host}:{port}" if host and port else host
+
+
+def _begin_monitor(strategy_id, provider_id, model,
+                   client_ip, request_body):
+    """请求开始：生成 rid、广播 start 事件，并把 rid 挂到 body 上供落库时关联 done。"""
+    rid = uuid.uuid4().hex[:12]
+    try:
+        from app.services.forwarder import _broadcast_start
+        _broadcast_start(
+            rid, client_ip or str(request_body.get("_client_ip") or "-")[:64],
+            strategy_id, provider_id, model,
+        )
+    except Exception:
+        pass
+    return rid
+
+
 def _instructions_of(chat_body: dict) -> str | None:
     """Recover the Responses `instructions` field from the converted chat body.
 
@@ -115,15 +150,26 @@ async def _resolve(strategy_name: str, db: AsyncSession):
 
 
 async def _try_forward(strategy, db, request_body, is_stream, out_format="openai"):
-    """Try to forward request using balancer with retry logic."""
+    """Forward through a composite strategy with layered policies:
+
+    - Rule layer (model selection): ``strategy.lb_strategy`` + rule priority.
+      On failure, failover/priority advance to the next rule by priority.
+    - Key layer: when calling a chosen model, use that model's own Provider
+      ``key_*`` policy (not the composite strategy's key settings).
+    - Attempt budget: ``strategy.retry_count + 1`` total attempts.
+    """
     balancer = Balancer(db)
     forwarder = Forwarder(db)
     last_error = None
+    last_failed_response = None
+    tried_rules: set[int] = set()
 
     for attempt in range(strategy.retry_count + 1):
-        rule = await balancer.select_rule(strategy)
+        rule = await balancer.select_rule(strategy, exclude_ids=tried_rules)
         if not rule:
-            raise HTTPException(503, detail="No active rules in strategy")
+            last_error = last_error or "No active rules in strategy"
+            break
+        tried_rules.add(rule.id)
 
         provider = await db.get(Provider, rule.provider_id)
         model = await db.get(Model, rule.model_id)
@@ -131,16 +177,17 @@ async def _try_forward(strategy, db, request_body, is_stream, out_format="openai
             last_error = "Provider or model unavailable"
             continue
 
-        api_key = await balancer.select_key(provider.id, strategy)
+        # Key 策略遵循该模型所属平台自身的配置（分层：模型调用用组合策略，Key 用平台策略）
+        api_key = await balancer.select_key(provider.id, strategy, key_policy=provider)
         if not api_key:
             last_error = f"No active API key for {provider.name}"
             continue
 
         try:
             if is_stream:
+                # 流式响应一旦开始下发便无法切换规则，按当前规则直出
                 return await _handle_stream(strategy, rule, provider, model, api_key, request_body, forwarder, db, out_format)
-            else:
-                return await _handle_non_stream(strategy, rule, provider, model, api_key, request_body, forwarder, db, out_format)
+            result = await _handle_non_stream(strategy, rule, provider, model, api_key, request_body, forwarder, db, out_format)
         except (httpx.HTTPStatusError, httpx.RequestError) as e:
             last_error = str(e)[:500]
             if isinstance(e, httpx.HTTPStatusError):
@@ -157,8 +204,23 @@ async def _try_forward(strategy, db, request_body, is_stream, out_format="openai
             last_error = str(e)[:500]
             continue
 
+        if isinstance(result, JSONResponse) and result.status_code >= 400:
+            # 上游失败：记账已在 _handle_non_stream 内完成；按 failover 切到下一条规则
+            try:
+                err = json.loads(result.body).get("error") or {}
+                last_error = err.get("message") or str(result.status_code)
+            except Exception:
+                last_error = str(result.status_code)
+            last_failed_response = result
+            continue
+        return result
+
+    # 每条规则都失败：把最后一条真实的上游错误回给客户端，保留原始状态码/消息
+    if last_failed_response is not None:
+        return last_failed_response
+
     try:
-        await forwarder.log_request(
+        forwarder.log_request_bg(
             strategy.id, None, None, str(last_error)[:100],
             request_body, 502, 0, is_stream, str(last_error)[:500],
         )
@@ -170,6 +232,8 @@ async def _try_forward(strategy, db, request_body, is_stream, out_format="openai
 
 async def _handle_stream(strategy, rule, provider, model, api_key, request_body, forwarder, db, out_format="openai"):
     start = time.monotonic()
+    rid = _begin_monitor(strategy.id, provider.id, model.model_id,
+                         str(request_body.get("_client_ip") or "-"), request_body)
 
     token_counter = {"prompt": 0, "completion": 0}
 
@@ -177,6 +241,8 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
     output_proto = get_output_protocol() if out_format == "openai" else out_format
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     writer = None
+    # 跨 chunk 累积状态：工具调用增量需要合并 name/arguments
+    stream_state: dict = {}
     if output_proto == "responses":
         writer = ResponsesStreamWriter(
             model_id=request_body.get("model") or model.model_id,
@@ -242,9 +308,9 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
                     except Exception:
                         continue
                     if output_proto == "claude":
-                        converted = convert_openai_stream_to_claude_chunks(obj, completion_id)
+                        converted = convert_openai_stream_to_claude_chunks(obj, completion_id, stream_state)
                     else:
-                        converted = convert_openai_stream_to_gemini_chunks(obj)
+                        converted = convert_openai_stream_to_gemini_chunks(obj, stream_state)
                     if converted:
                         yield converted
                     continue
@@ -258,6 +324,7 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
                 strategy.id, provider.id, api_key.id, model.model_id,
                 request_body, 200, latency, True, None,
                 prompt_tokens=token_counter["prompt"], completion_tokens=token_counter["completion"], total_tokens=total,
+                rid=rid,
             )
             if strategy.lb_strategy == "token_threshold" and total > 0:
                 _rule_token_tracker.record_usage(
@@ -270,6 +337,7 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
             await forwarder.log_request(
                 strategy.id, provider.id, api_key.id, model.model_id,
                 request_body, 500, latency, True, str(e)[:500],
+                rid=rid,
             )
             try:
                 # 流式中途失败：网络/上游错误只记账，不改 key 状态
@@ -291,6 +359,8 @@ async def _handle_stream(strategy, rule, provider, model, api_key, request_body,
 
 async def _handle_non_stream(strategy, rule, provider, model, api_key, request_body, forwarder, db, out_format="openai"):
     start = time.monotonic()
+    rid = _begin_monitor(strategy.id, provider.id, model.model_id,
+                         str(request_body.get("_client_ip") or "-"), request_body)
     resp = await forwarder.forward(strategy, rule, provider, model, api_key, request_body, is_stream=False)
     latency = int((time.monotonic() - start) * 1000)
 
@@ -307,9 +377,10 @@ async def _handle_non_stream(strategy, rule, provider, model, api_key, request_b
         await record_key_success(api_key, db)
 
     if resp.status_code >= 400:
-        await forwarder.log_request(
+        forwarder.log_request_bg(
             strategy.id, provider.id, api_key.id, model.model_id,
             request_body, resp.status_code, latency, False, resp.text[:500],
+            rid=rid,
         )
         message = resp.text[:500]
         output_proto = get_output_protocol() if out_format == "openai" else out_format
@@ -359,10 +430,11 @@ async def _handle_non_stream(strategy, rule, provider, model, api_key, request_b
             completion_tok = usage.get("completion_tokens", 0) or 0
             total_tok = usage.get("total_tokens", 0) or (prompt_tok + completion_tok)
 
-    await forwarder.log_request(
+    forwarder.log_request_bg(
         strategy.id, provider.id, api_key.id, model.model_id,
         request_body, 200, latency, False, None,
         prompt_tokens=prompt_tok, completion_tokens=completion_tok, total_tokens=total_tok,
+        rid=rid,
     )
     if strategy.lb_strategy == "token_threshold" and total_tok > 0:
         _rule_token_tracker.record_usage(
@@ -465,6 +537,8 @@ async def _dispatch_by_model(model_name: str, db: AsyncSession, body: dict,
 
 async def _chat_completions_impl(request: Request, db: AsyncSession, out_format="openai", body_override: dict | None = None):
     body = body_override if body_override is not None else await request.json()
+    # 可视化监控需要请求来源 IP；协议转换/passthrough 均不会把下划线键发往上游
+    body.setdefault("_client_ip", _client_ip_of(request))
     model_name = body.get("model", "")
     is_stream = body.get("stream", False)
 
@@ -945,20 +1019,35 @@ async def embeddings(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(400, detail="input must be a string or a list of strings")
 
     forwarder = Forwarder(db)
+    rid = _begin_monitor(0, provider.id, model_obj.model_id, _client_ip_of(request), {})
     start = time.time()
+    latency = 0
     try:
         vectors = await forwarder.forward_embeddings(provider, model_obj, api_key, input_texts)
     except ValueError as e:
+        latency = int((time.time() - start) * 1000)
+        forwarder.log_request_bg(
+            0, provider.id, api_key.id, model_obj.model_id,
+            {"_client_ip": _client_ip_of(request)},
+            400, latency, False, str(e)[:500], rid=rid,
+        )
         raise HTTPException(400, detail=str(e))
     except Exception as e:
+        latency = int((time.time() - start) * 1000)
+        forwarder.log_request_bg(
+            0, provider.id, api_key.id, model_obj.model_id,
+            {"_client_ip": _client_ip_of(request)},
+            502, latency, False, f"Embedding request failed: {str(e)[:500]}", rid=rid,
+        )
         raise HTTPException(502, detail=f"Embedding request failed: {str(e)[:500]}")
 
     latency = int((time.time() - start) * 1000)
     try:
-        await forwarder.log_request(
-            0, provider.id, api_key.id, model_obj.model_id, {},
+        forwarder.log_request_bg(
+            0, provider.id, api_key.id, model_obj.model_id,
+            {"_client_ip": _client_ip_of(request)},
             200, latency, False, None,
-            prompt_tokens=0, completion_tokens=0, total_tokens=0,
+            prompt_tokens=0, completion_tokens=0, total_tokens=0, rid=rid,
         )
     except Exception:
         pass

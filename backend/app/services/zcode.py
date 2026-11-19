@@ -27,6 +27,7 @@ import uuid
 import httpx
 
 from app.services.zcode_system import SYSTEM_BLOCKS_JSON
+from app.utils import ssl_relax
 
 ZCODE_API_BASE = "https://zcode.z.ai"
 MESSAGES_PATH = "/api/v1/zcode-plan/anthropic/v1/messages"
@@ -711,10 +712,12 @@ class ZcodeClient:
             req["reasoning_effort"] = reasoning_effort
         body = normalize_body(openai_to_anthropic(req), self.jwt)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                resp = await client.post(self.base_url + MESSAGES_PATH,
-                                         headers=chat_headers(self.jwt),
-                                         content=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            # 共享 client（复用连接，省去每请求的证书库加载），timeout 按请求覆盖
+            client = ssl_relax.get_client(self.base_url + MESSAGES_PATH)
+            resp = await client.post(self.base_url + MESSAGES_PATH,
+                                     headers=chat_headers(self.jwt),
+                                     content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                     timeout=self.timeout)
         except httpx.TimeoutException:
             raise ZcodeError(504, "ZCode 上游超时", "timeout")
         except httpx.HTTPError as e:
@@ -753,32 +756,33 @@ class ZcodeClient:
             req["reasoning_effort"] = reasoning_effort
         body = normalize_body(openai_to_anthropic(req), self.jwt)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                async with client.stream("POST", self.base_url + MESSAGES_PATH,
-                                         headers=chat_headers(self.jwt),
-                                         content=json.dumps(body, ensure_ascii=False).encode("utf-8")) as resp:
-                    if resp.status_code != 200:
-                        raw = await resp.aread()
-                        raise_for_response(httpx.Response(resp.status_code, content=raw,
-                                                          headers=dict(resp.headers)))
-                        raise ZcodeError(resp.status_code, f"ZCode 上游错误 HTTP {resp.status_code}",
-                                         "upstream_error")
-                    ct = (resp.headers.get("content-type") or "")
-                    if "application/json" in ct:
-                        # HTTP 200 + JSON 错误体（如 1005 配额），不会以 SSE 事件出现
-                        raw = await resp.aread()
-                        try:
-                            err = json.loads(raw)
-                        except ValueError:
-                            raise ZcodeError(502, f"ZCode 上游返回非 JSON: {raw[:200]!r}", "invalid_upstream")
-                        raise_for_body(err, resp.status_code)
-                        raise ZcodeError(502, f"ZCode 上游返回异常: {json.dumps(err, ensure_ascii=False)[:200]}",
-                                         "invalid_upstream")
-                    completion_id = "chatcmpl-" + uuid.uuid4().hex[:12]
-                    async for ev, data in iter_anthropic_sse(resp):
-                        chunk = anth_event_to_openai(ev, data, completion_id, model_id)
-                        if chunk is not None:
-                            yield chunk
+            client = ssl_relax.get_client(self.base_url + MESSAGES_PATH)
+            async with client.stream("POST", self.base_url + MESSAGES_PATH,
+                                     headers=chat_headers(self.jwt),
+                                     content=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                                     timeout=self.timeout) as resp:
+                if resp.status_code != 200:
+                    raw = await resp.aread()
+                    raise_for_response(httpx.Response(resp.status_code, content=raw,
+                                                      headers=dict(resp.headers)))
+                    raise ZcodeError(resp.status_code, f"ZCode 上游错误 HTTP {resp.status_code}",
+                                     "upstream_error")
+                ct = (resp.headers.get("content-type") or "")
+                if "application/json" in ct:
+                    # HTTP 200 + JSON 错误体（如 1005 配额），不会以 SSE 事件出现
+                    raw = await resp.aread()
+                    try:
+                        err = json.loads(raw)
+                    except ValueError:
+                        raise ZcodeError(502, f"ZCode 上游返回非 JSON: {raw[:200]!r}", "invalid_upstream")
+                    raise_for_body(err, resp.status_code)
+                    raise ZcodeError(502, f"ZCode 上游返回异常: {json.dumps(err, ensure_ascii=False)[:200]}",
+                                     "invalid_upstream")
+                completion_id = "chatcmpl-" + uuid.uuid4().hex[:12]
+                async for ev, data in iter_anthropic_sse(resp):
+                    chunk = anth_event_to_openai(ev, data, completion_id, model_id)
+                    if chunk is not None:
+                        yield chunk
         except httpx.TimeoutException:
             raise ZcodeError(504, "ZCode 上游超时", "timeout")
         except httpx.HTTPError as e:

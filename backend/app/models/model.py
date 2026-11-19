@@ -11,7 +11,15 @@ class Model(Base):
     display_name = Column(String(200), default="")
     is_active = Column(Boolean, default=True)
     is_multimodal = Column(Boolean, default=False)
-    model_type = Column(String(20), default="text")  # text/image/video/tts/embedding
+    model_type = Column(String(20), default="text")  # 主类型 text/image/video/tts/embedding（路由按它匹配）
+    # 模型支持的全部类型（逗号分隔，如 "text,image"）：仅用于展示，为空时回退 model_type
+    model_types = Column(String(120), default="")
+    # 模型能力：识图 / 搜索支持 / 工具调用
+    supports_vision = Column(Boolean, default=False)
+    supports_search = Column(Boolean, default=False)
+    supports_tools = Column(Boolean, default=False)
+    # 能力推断版本：存量行由迁移置 0（启动时重算），新建行直接为 2
+    cap_version = Column(Integer, default=2)
     context_window = Column(Integer, nullable=True)
     temperature = Column(Float, nullable=True)
     price_input = Column(Float, nullable=True)   # per 1M tokens

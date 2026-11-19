@@ -124,6 +124,7 @@ async def seed_new_install() -> dict | None:
             model_id=DEFAULT_MODEL_ID,
             display_name=DEFAULT_MODEL_NAME,
             model_type="text",
+            model_types="text",
             is_active=True,
         )
         session.add(default_model)

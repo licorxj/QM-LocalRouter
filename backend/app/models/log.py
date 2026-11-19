@@ -6,6 +6,7 @@ class RequestLog(Base):
     __tablename__ = "request_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    client_ip = Column(String(64), default="")
     strategy_id = Column(Integer, ForeignKey("strategies.id"), nullable=True)
     provider_id = Column(Integer, ForeignKey("providers.id"), nullable=True)
     api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=True)

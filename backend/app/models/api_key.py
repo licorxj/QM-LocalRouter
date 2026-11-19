@@ -21,6 +21,9 @@ class ApiKey(Base):
     oauth_profile = Column(String(50), default="")  # non-empty => token obtained via browser login
     oauth_refresh = Column(Text, default="")  # encrypted refresh token
     oauth_expires_at = Column(Integer, default=0)  # unix seconds
+    # 账号接入页的额度缓存（JSON：plan/metrics/签到状态；由 /api/accounts/refresh 写入）
+    quota_cache = Column(Text, default="")
+    quota_fetched_at = Column(Integer, default=0)  # unix seconds
     last_used_at = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

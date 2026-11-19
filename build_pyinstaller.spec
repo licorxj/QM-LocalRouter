@@ -67,6 +67,9 @@ _common = dict(
     # version.json is generated at release-build time (see build-release.yml) and
     # carries the git tag/commit so the frozen exe reports a real version.
     datas=list(litellm_datas) + list(desktop_datas)
+    # alembic schema migrations: env.py reads these from sys._MEIPASS in
+    # onefile builds (see database._alembic_assets_dir).
+    + [("backend/alembic", "alembic"), ("backend/alembic.ini", ".")]
     + ([("version.json", ".")] if os.path.exists("version.json") else []),
     hiddenimports=[
         "app",
@@ -84,6 +87,11 @@ _common = dict(
         # aiosqlite is imported by sqlalchemy's dialect registry through a
         # string at runtime, so static analysis never sees it.
         "aiosqlite",
+        # alembic command API loads env.py + dialect modules dynamically
+        "alembic",
+        "alembic.command",
+        "alembic.config",
+        "alembic.runtime.migration",
     ] + list(litellm_hiddenimports) + list(desktop_hidden),
     hookspath=[],
     hooksconfig={},

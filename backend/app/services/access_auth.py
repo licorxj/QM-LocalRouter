@@ -96,6 +96,21 @@ async def _find_active_client_key(db: AsyncSession, key_value: str) -> ClientKey
     return result.scalar_one_or_none()
 
 
+async def _touch_key(key: ClientKey, db: AsyncSession) -> None:
+    """更新 last_used_at，60s 节流：避免每个请求都 commit 一次。
+
+    SQLite 读回的 DateTime 无时区信息，按 UTC 处理后比较。
+    """
+    now = datetime.now(timezone.utc)
+    last = key.last_used_at
+    if last is not None and getattr(last, "tzinfo", None) is None:
+        last = last.replace(tzinfo=timezone.utc)
+    if last is not None and (now - last).total_seconds() < 60:
+        return
+    key.last_used_at = now
+    await db.commit()
+
+
 async def verify_client_auth(request: Request, db: AsyncSession = Depends(get_db)):
     settings = _get_settings()
 
@@ -119,8 +134,7 @@ async def verify_client_auth(request: Request, db: AsyncSession = Depends(get_db
     # 1) Static virtual key (also honored in oauth mode)
     key = await _find_active_client_key(db, token)
     if key:
-        key.last_used_at = datetime.now(timezone.utc)
-        await db.commit()
+        await _touch_key(key, db)
         return
 
     # 2) JWT issued by browser login (/oauth/token or /api/auth/login)
@@ -135,5 +149,4 @@ async def verify_alias_client_key(client_key: str, db: AsyncSession = Depends(ge
     key = await _find_active_client_key(db, client_key)
     if not key:
         raise _auth_error(401, "Invalid or disabled API key.")
-    key.last_used_at = datetime.now(timezone.utc)
-    await db.commit()
+    await _touch_key(key, db)

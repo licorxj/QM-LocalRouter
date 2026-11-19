@@ -100,7 +100,9 @@ export default function Logs() {
                     <TableCell className='text-sm'>{l.strategy_id ? getStrategyName(l.strategy_id) : '-'}</TableCell>
                     <TableCell className='text-sm'>{l.provider_id ? getProviderName(l.provider_id) : '-'}</TableCell>
                     <TableCell className='font-mono text-xs text-muted-foreground'>{l.model_used || '-'}</TableCell>
-                    <TableCell className='text-sm'>{l.key_alias || '-'}</TableCell>
+                    <TableCell className='text-sm'>
+                      <span className='block max-w-[180px] truncate font-mono text-xs text-muted-foreground' title={l.key_alias || ''}>{l.key_alias || '-'}</span>
+                    </TableCell>
                     <TableCell>
                       {l.status_code && l.status_code >= 200 && l.status_code < 300 ? (
                         <Badge variant='success'>{l.status_code}</Badge>

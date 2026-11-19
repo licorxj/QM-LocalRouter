@@ -147,82 +147,10 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      {/* Quick Actions + Active Strategies */}
-      <div className='grid grid-cols-1 gap-6 lg:grid-cols-2'>
-        {/* Quick Start Guide */}
-        <Card className='animate-in stagger-3'>
-          <CardHeader className='pb-4'>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <Zap className='h-4 w-4 text-primary' aria-hidden='true' />
-              {t('dashboard.quickStart')}
-            </CardTitle>
-            <CardDescription>{t('dashboard.subtitle')}</CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            <ol className='space-y-3'>
-              {quickSteps.map((item) => (
-                <li key={item.step} className='flex items-start gap-3'>
-                  <div className='flex h-6 w-6 flex-none items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-xs font-bold text-primary'>
-                    {item.step}
-                  </div>
-                  <div>
-                    <p className='text-sm font-medium'>{item.text}</p>
-                    <p className='text-xs text-muted-foreground'>{item.desc}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-            <div className='border-t border-border pt-4'>
-              <p className='mb-2 text-xs text-muted-foreground'>{t('dashboard.requestEndpoint')}</p>
-              <CodeBlock code={endpointCode} />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Active Strategies */}
-        <Card className='animate-in stagger-4'>
-          <CardHeader className='pb-4'>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <GitBranch className='h-4 w-4 text-info' aria-hidden='true' />
-              {t('dashboard.activeStrategiesTitle')}
-            </CardTitle>
-            <CardDescription>
-              {providers.length > 0
-                ? `${providers.length} ${t('dashboard.rulesCount')}`
-                : undefined}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {strategies.length === 0 ? (
-              <p className='py-6 text-center text-sm text-muted-foreground'>{t('dashboard.noStrategies')}</p>
-            ) : (
-              <ul className='space-y-2'>
-                {strategies.slice(0, 5).map((s: any) => (
-                  <li key={s.id}>
-                    <div className='flex items-center justify-between rounded-lg border border-transparent bg-muted/40 px-3 py-2.5 transition-colors hover:border-border hover:bg-muted/60'>
-                      <div className='flex min-w-0 items-center gap-3'>
-                        <span className='h-2 w-2 flex-none rounded-full bg-success' aria-hidden='true' />
-                        <div className='min-w-0'>
-                          <p className='truncate text-sm font-medium'>{s.name}</p>
-                          <p className='text-xs text-muted-foreground'>
-                            {s.rules?.length || 0} {t('dashboard.rulesCount')} · {s.lb_strategy}
-                          </p>
-                        </div>
-                      </div>
-                      <ArrowUpRight className='h-4 w-4 flex-none text-muted-foreground' aria-hidden='true' />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
       {/* 软件公告 + 赞助商席位（云端数据） */}
       <div className='grid grid-cols-1 gap-6 lg:grid-cols-2'>
         {/* Software Announcements */}
-        <Card className='animate-in stagger-5'>
+        <Card className='animate-in stagger-3'>
           <CardHeader className='pb-4'>
             <CardTitle className='flex items-center gap-2 text-base'>
               <Megaphone className='h-4 w-4 text-warning' aria-hidden='true' />
@@ -252,7 +180,7 @@ export default function Dashboard() {
         </Card>
 
         {/* Sponsor Seats */}
-        <Card className='animate-in stagger-6'>
+        <Card className='animate-in stagger-4'>
           <CardHeader className='pb-4'>
             <CardTitle className='flex items-center gap-2 text-base'>
               <HeartHandshake className='h-4 w-4 text-primary' aria-hidden='true' />
@@ -294,6 +222,78 @@ export default function Dashboard() {
                 );
               })}
             </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick Actions + Active Strategies */}
+      <div className='grid grid-cols-1 gap-6 lg:grid-cols-2'>
+        {/* Quick Start Guide */}
+        <Card className='animate-in stagger-5'>
+          <CardHeader className='pb-4'>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <Zap className='h-4 w-4 text-primary' aria-hidden='true' />
+              {t('dashboard.quickStart')}
+            </CardTitle>
+            <CardDescription>{t('dashboard.subtitle')}</CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <ol className='space-y-3'>
+              {quickSteps.map((item) => (
+                <li key={item.step} className='flex items-start gap-3'>
+                  <div className='flex h-6 w-6 flex-none items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-xs font-bold text-primary'>
+                    {item.step}
+                  </div>
+                  <div>
+                    <p className='text-sm font-medium'>{item.text}</p>
+                    <p className='text-xs text-muted-foreground'>{item.desc}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <div className='border-t border-border pt-4'>
+              <p className='mb-2 text-xs text-muted-foreground'>{t('dashboard.requestEndpoint')}</p>
+              <CodeBlock code={endpointCode} />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Active Strategies */}
+        <Card className='animate-in stagger-6'>
+          <CardHeader className='pb-4'>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <GitBranch className='h-4 w-4 text-info' aria-hidden='true' />
+              {t('dashboard.activeStrategiesTitle')}
+            </CardTitle>
+            <CardDescription>
+              {providers.length > 0
+                ? `${providers.length} ${t('dashboard.rulesCount')}`
+                : undefined}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {strategies.length === 0 ? (
+              <p className='py-6 text-center text-sm text-muted-foreground'>{t('dashboard.noStrategies')}</p>
+            ) : (
+              <ul className='space-y-2'>
+                {strategies.slice(0, 5).map((s: any) => (
+                  <li key={s.id}>
+                    <div className='flex items-center justify-between rounded-lg border border-transparent bg-muted/40 px-3 py-2.5 transition-colors hover:border-border hover:bg-muted/60'>
+                      <div className='flex min-w-0 items-center gap-3'>
+                        <span className='h-2 w-2 flex-none rounded-full bg-success' aria-hidden='true' />
+                        <div className='min-w-0'>
+                          <p className='truncate text-sm font-medium'>{s.name}</p>
+                          <p className='text-xs text-muted-foreground'>
+                            {s.rules?.length || 0} {t('dashboard.rulesCount')} · {s.lb_strategy}
+                          </p>
+                        </div>
+                      </div>
+                      <ArrowUpRight className='h-4 w-4 flex-none text-muted-foreground' aria-hidden='true' />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>

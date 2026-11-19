@@ -13,7 +13,7 @@ type CodeBlockProps = {
 /** Terminal-style code snippet with a copy affordance. */
 export function CodeBlock({ code, label, className, codeClassName }: CodeBlockProps) {
   return (
-    <div className={cn("group relative overflow-hidden rounded-lg border bg-muted/40", className)}>
+    <div className={cn("glass-subtle group relative overflow-hidden rounded-lg", className)}>
       {label ? (
         <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-1.5">
           <span className="text-xs font-medium text-muted-foreground">{label}</span>

@@ -1,6 +1,6 @@
 import React from "react";
 import { useToastStore } from "../../stores/toast";
-import { X, CheckCircle, AlertCircle } from "lucide-react";
+import { X, CheckCircle, AlertCircle, AlertTriangle } from "lucide-react";
 
 export function Toaster() {
   const { toasts, removeToast } = useToastStore();
@@ -18,6 +18,8 @@ export function Toaster() {
               ? "border-red-500/30 bg-red-950/90 text-red-200"
               : t.variant === "success"
               ? "border-green-500/30 bg-green-950/90 text-green-200"
+              : t.variant === "warning"
+              ? "border-amber-500/30 bg-amber-950/90 text-amber-200"
               : "border-border bg-card/95 text-foreground")
           }
         >
@@ -26,6 +28,8 @@ export function Toaster() {
               <AlertCircle className="h-4 w-4 text-red-400" />
             ) : t.variant === "success" ? (
               <CheckCircle className="h-4 w-4 text-green-400" />
+            ) : t.variant === "warning" ? (
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
             ) : null}
           </div>
           <div className="flex-1 min-w-0">

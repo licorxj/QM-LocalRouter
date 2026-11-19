@@ -21,6 +21,9 @@ from app.routers import oauth_login
 from app.routers import oauth_flow
 from app.routers import cli_import
 from app.routers import cloud_meta
+from app.routers import app_update
+from app.routers import accounts
+from app.routers import plugins as plugins_router
 from app.version import get_version_info
 
 
@@ -58,13 +61,38 @@ class DynamicCORSMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     await init_db()
+    # 预热版本信息：git describe 在 Windows 上同步 spawn 子进程（50-100ms），
+    # 放到启动阶段用线程池执行，避免首个 /api/health、/api/version 请求阻塞事件循环。
+    try:
+        await asyncio.to_thread(get_version_info)
+    except Exception:
+        pass
     # Check auto-backup on startup
     try:
         await backup.check_auto_backup()
     except Exception:
         pass
+    # 插件索引后台同步（静默，失败不影响启动）
+    try:
+        from app.services import plugin_manager
+        plugin_manager.startup_sync()
+    except Exception:
+        pass
     yield
+    # 关闭转发层共享的 httpx client 池（forwarder/ssl_relax 进程级复用）
+    try:
+        from app.utils import ssl_relax
+        await ssl_relax.aclose_all()
+    except Exception:
+        pass
+    # 停掉所有插件引擎子进程
+    try:
+        from app.services import plugin_host
+        await plugin_host.stop_all()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -84,6 +112,9 @@ app.include_router(oauth_login.router)
 app.include_router(oauth_flow.router)
 app.include_router(cli_import.router)
 app.include_router(cloud_meta.router)
+app.include_router(app_update.router)
+app.include_router(plugins_router.router)
+app.include_router(accounts.router)
 app.include_router(providers.router)
 app.include_router(proxy.alias_router)
 app.include_router(api_keys.router)
@@ -91,6 +122,8 @@ app.include_router(models.router)
 app.include_router(strategies.router)
 app.include_router(logs.router)
 app.include_router(dashboard.router)
+from app.routers import monitor  # 可视化监控（SSE 实时推流）
+app.include_router(monitor.router)
 
 # Icon search/download
 app.include_router(icons.router)
@@ -103,6 +136,12 @@ app.include_router(service.router)
 # Proxy endpoints (OpenAI-compatible)
 app.include_router(settings_router)
 app.include_router(proxy.router)
+
+
+@app.get("/api/ping")
+async def ping():
+    """轻量探活：无 DB、无子进程，用于测量框架本身的基础 RTT。"""
+    return {"pong": True}
 
 
 @app.get("/api/health")

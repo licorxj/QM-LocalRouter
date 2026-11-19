@@ -16,20 +16,23 @@ function VersionFooter() {
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5 font-mono text-[11px] tracking-wider text-muted-foreground/70">
-      {versionInfo ? (
-        <>
-          <span>v{versionInfo.version}</span>
-          {versionInfo.git_commit && (
-            <span className="opacity-70">#{String(versionInfo.git_commit).slice(0, 7)}</span>
-          )}
-          {versionInfo.build_type === "release" && (
-            <span className="rounded bg-primary/12 px-1 text-primary">rel</span>
-          )}
-        </>
-      ) : (
-        <span>v1.0.0</span>
-      )}
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-foreground/[0.025] px-2 py-1 font-mono text-[11px] tracking-wide text-muted-foreground/80">
+      <span className="status-led status-led-orange pulse-dot" aria-hidden="true" />
+      <span className="truncate">
+        {versionInfo ? (
+          <>
+            v{versionInfo.version}
+            {versionInfo.git_commit && (
+              <span className="opacity-70">#{String(versionInfo.git_commit).slice(0, 7)}</span>
+            )}
+            {versionInfo.build_type === "release" && (
+              <span className="ml-1 rounded bg-primary/12 px-1 text-primary">rel</span>
+            )}
+          </>
+        ) : (
+          "v1.0.0"
+        )}
+      </span>
     </div>
   );
 }
@@ -45,26 +48,40 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
   const navItems = useNavItems();
   const { toggleCollapsed } = useShell();
 
+  const groups = navItems.reduce<{ section: string; items: typeof navItems }[]>((acc, item) => {
+    let group = acc.find((g) => g.section === item.section);
+    if (!group) {
+      group = { section: item.section, items: [] };
+      acc.push(group);
+    }
+    group.items.push(item);
+    return acc;
+  }, []);
+
   return (
     <>
-      {/* Logo */}
+      {/* Brand */}
       <div
         className={cn(
-          "flex h-14 flex-none items-center gap-2.5 border-b border-border px-4",
+          "relative z-10 flex h-16 flex-none items-center gap-2.5 border-b border-border/70 px-4",
           collapsed && "justify-center px-0"
         )}
       >
-        <img
-          src="/logo.png"
-          alt="LocalRouter"
-          className="h-8 w-8 flex-none object-contain"
-        />
+        <span className="relative flex h-9 w-9 flex-none items-center justify-center">
+          <span className="nav-logo-halo" aria-hidden="true" />
+          <img
+            src="/logo.png"
+            alt="LocalRouter"
+            className="nav-logo relative h-9 w-9 object-contain"
+          />
+        </span>
         {!collapsed && (
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-bold tracking-tight text-foreground">
-              LocalRouter
+            <h1 className="truncate text-lg font-bold tracking-tight">
+              <span className="gradient-text">Local</span>
+              <span className="text-route-blue">Router</span>
             </h1>
-            <p className="truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-primary/80">
+            <p className="mt-0.5 truncate text-[10px] font-semibold tracking-[0.16em] text-primary/75">
               {t("sidebar.tagline")}
             </p>
           </div>
@@ -75,7 +92,7 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
             onClick={toggleCollapsed}
             aria-label={t("sidebar.collapse")}
             title={t("sidebar.collapse")}
-            className="ml-auto hidden rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground md:block"
+            className="ml-auto hidden rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground md:block"
           >
             <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -83,61 +100,84 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
       </div>
 
       {/* Navigation */}
-      <nav className={cn("flex-1 space-y-0.5 overflow-y-auto py-3", collapsed ? "px-2" : "px-3")}>
-        {navItems.map((item) => {
-          const link = (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  "group relative flex items-center rounded-lg text-sm transition-colors",
-                  collapsed ? "h-10 justify-center px-0" : "gap-3 px-3 py-2 font-medium",
-                  isActive
-                    ? "bg-primary/10 font-semibold text-primary"
-                    : "text-sidebar-foreground hover:bg-foreground/5 hover:text-foreground"
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "absolute top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary",
-                        collapsed ? "left-0" : "-left-3"
-                      )}
-                    />
-                  )}
-                  <item.icon
-                    className={cn("h-4 w-4 flex-none", !isActive && "text-muted-foreground group-hover:text-foreground")}
-                    strokeWidth={isActive ? 2.4 : 2}
-                    aria-hidden="true"
-                  />
-                  {!collapsed && <span className="truncate">{item.label}</span>}
-                </>
-              )}
-            </NavLink>
-          );
+      <nav
+        className={cn(
+          "relative z-10 flex-1 overflow-y-auto py-2",
+          collapsed ? "px-2" : "px-3"
+        )}
+      >
+        {groups.map((group, gi) => (
+          <div key={group.section} className={gi > 0 ? "mt-4" : ""}>
+            {collapsed ? (
+              <div className="mx-auto mb-2 h-px w-6 bg-border/70" aria-hidden="true" />
+            ) : (
+              <div className="nav-section-label">{t(`sidebar.section.${group.section}`)}</div>
+            )}
+            <div className="space-y-0.5">
+              {group.items.map((item, ii) => {
+                const link = (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === "/"}
+                    onClick={onNavigate}
+                    style={{ animationDelay: `${gi * 70 + ii * 45}ms` }}
+                    className={({ isActive }) =>
+                      cn(
+                        "group animate-in relative flex items-center rounded-xl text-sm transition-all duration-200",
+                        collapsed ? "h-11 justify-center px-0" : "h-11 gap-3 px-2.5 font-medium",
+                        isActive
+                          ? "nav-link-active font-semibold"
+                          : "text-sidebar-foreground hover:bg-foreground/[0.045] hover:text-foreground"
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        {isActive && (
+                          <span
+                            aria-hidden="true"
+                            className={cn("nav-rail", collapsed && "nav-rail-collapsed")}
+                          >
+                            <span className="nav-rail-node" />
+                          </span>
+                        )}
+                        <span
+                          className={cn("nav-icon-tile", isActive && "nav-icon-tile-active")}
+                        >
+                          <item.icon
+                            className="h-[17px] w-[17px]"
+                            strokeWidth={isActive ? 2.3 : 1.9}
+                            aria-hidden="true"
+                          />
+                        </span>
+                        {!collapsed && <span className="truncate">{item.label}</span>}
+                        {!collapsed && isActive && (
+                          <span className="nav-active-dot ml-auto" aria-hidden="true" />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                );
 
-          return collapsed ? (
-            <Tooltip key={item.to}>
-              <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">{item.label}</TooltipContent>
-            </Tooltip>
-          ) : (
-            link
-          );
-        })}
+                return collapsed ? (
+                  <Tooltip key={item.to}>
+                    <TooltipTrigger asChild>{link}</TooltipTrigger>
+                    <TooltipContent side="right">{item.label}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  link
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       {/* Footer */}
       <div
         className={cn(
-          "flex flex-none items-center gap-2 border-t border-border px-4 py-3",
+          "relative z-10 flex flex-none items-center gap-2 border-t border-border/70 px-4 py-3",
           collapsed && "justify-center px-0"
         )}
       >
@@ -147,7 +187,7 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
           onClick={() => (collapsed ? toggleCollapsed() : useShell.getState().setMobileOpen(false))}
           aria-label={collapsed ? t("sidebar.expand") : t("sidebar.closeMenu")}
           className={cn(
-            "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
+            "rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground",
             collapsed ? "md:block" : "md:hidden"
           )}
         >
@@ -166,7 +206,7 @@ export default function Sidebar() {
       {/* Desktop rail */}
       <aside
         className={cn(
-          "sidebar-gradient relative z-40 hidden h-full flex-none flex-col transition-[width] duration-200 md:flex",
+          "sidebar-gradient relative z-40 hidden h-full flex-none flex-col transition-[width] duration-300 md:flex",
           collapsed ? "w-[68px]" : "w-60"
         )}
       >
@@ -184,7 +224,7 @@ export default function Sidebar() {
       />
       <aside
         className={cn(
-          "sidebar-gradient fixed inset-y-0 left-0 z-50 flex w-60 flex-col transition-transform duration-200 md:hidden",
+          "sidebar-gradient fixed inset-y-0 left-0 z-50 flex w-60 flex-col transition-transform duration-300 md:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
         aria-hidden={!mobileOpen}

@@ -39,14 +39,34 @@ class AppSettings(BaseModel):
     enabled_groups: dict = {}
     oauth_token_hours: int = 24
 
+_settings_cache: dict | None = None
+_settings_mtime: float = -1.0
+
+
 def _get_settings() -> dict:
-    if SETTINGS_PATH.exists():
-        with open(SETTINGS_PATH, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
+    """读应用设置；带 mtime 缓存。
+
+    转发热路径每请求会调用本函数多次（鉴权 + output_protocol），原实现每次
+    都 open+read+json.parse 同一个文件（Windows 上同步 IO 受杀软扫描影响，
+    单次可达数毫秒）。改为 stat 校验 mtime：文件未变直接返回缓存副本，
+    保存设置后 mtime 变化自动失效。
+    """
+    global _settings_cache, _settings_mtime
+    try:
+        mtime = SETTINGS_PATH.stat().st_mtime
+    except OSError:
+        return DEFAULTS.copy()
+    if _settings_cache is None or mtime != _settings_mtime:
+        try:
+            with open(SETTINGS_PATH, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return DEFAULTS.copy()
         default = DEFAULTS.copy()
         default.update(data)
-        return default
-    return DEFAULTS.copy()
+        _settings_cache = default
+        _settings_mtime = mtime
+    return dict(_settings_cache)
 
 def _save_settings(data: dict):
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:

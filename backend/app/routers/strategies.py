@@ -158,3 +158,110 @@ async def test_strategy(strategy_id: int, db: AsyncSession = Depends(get_db)):
 
     return StrategyTestResult(success=resp["success"], message=resp.get("message", ""),
                               latency_ms=elapsed, provider_used=resp.get("provider"), model_used=resp.get("model"))
+
+
+@router.post("/{strategy_id}/test-rules")
+async def test_strategy_rules(strategy_id: int, db: AsyncSession = Depends(get_db)):
+    """逐条测试策略下所有规则：复用 Forwarder 真实转发链路（选 Key、协议适配），
+    并发探测，返回每条的连通性与延迟（毫秒），并回写模型状态。"""
+    import asyncio
+    from app.models.provider import Provider
+    from app.models.model import Model as ModelTable
+    from app.services.forwarder import Forwarder
+
+    result = await db.execute(
+        select(StrategyRule).where(StrategyRule.strategy_id == strategy_id).order_by(StrategyRule.priority)
+    )
+    rules = result.scalars().all()
+    if not rules:
+        return {"total": 0, "results": []}
+
+    forwarder = Forwarder(db)
+    sem = asyncio.Semaphore(5)
+
+    async def bounded_test(rule: StrategyRule):
+        async with sem:
+            start = time.monotonic()
+            try:
+                resp = await forwarder.send_test_request_strategy_rule(strategy_id, rule)
+            except Exception as e:
+                resp = {"success": False, "message": str(e)[:200]}
+            latency = int((time.monotonic() - start) * 1000)
+        return (rule, resp, latency)
+
+    probes = await asyncio.gather(*(bounded_test(r) for r in rules))
+
+    # 取一次 provider/model 名称映射（probe 之后统一回写状态）
+    provider_ids = {r.provider_id for r in rules}
+    model_ids = {r.model_id for r in rules}
+    prov_result = await db.execute(select(Provider).where(Provider.id.in_(provider_ids)))
+    providers = {p.id: p for p in prov_result.scalars().all()}
+    model_result = await db.execute(select(ModelTable).where(ModelTable.id.in_(model_ids)))
+    models = {m.id: m for m in model_result.scalars().all()}
+
+    out: list[dict] = []
+    for rule, resp, latency in probes:
+        ok = bool(resp.get("success"))
+        msg = str(resp.get("message", ""))
+        provider = providers.get(rule.provider_id)
+        model = models.get(rule.model_id)
+        # 回写模型状态（与「测试全部模型」一致）
+        if model:
+            model.status = "active" if ok else "inactive"
+            model.last_error = "" if ok else msg[:500]
+        out.append({
+            "rule_id": rule.id,
+            "priority": rule.priority,
+            "provider_id": rule.provider_id,
+            "provider_name": provider.name if provider else str(rule.provider_id),
+            "model_name": model.model_id if model else str(rule.model_id),
+            "success": ok,
+            "message": msg,
+            "latency_ms": latency,
+        })
+
+    await db.commit()
+    return {"total": len(out), "results": out}
+
+
+@router.post("/{strategy_id}/rules/{rule_id}/test")
+async def test_single_rule(strategy_id: int, rule_id: int, db: AsyncSession = Depends(get_db)):
+    """单独测试策略下的一条规则：复用真实转发链路，返回连通性与延迟并回写模型状态。"""
+    from app.models.provider import Provider
+    from app.models.model import Model as ModelTable
+    from app.services.forwarder import Forwarder
+
+    result = await db.execute(
+        select(StrategyRule).where(
+            StrategyRule.id == rule_id, StrategyRule.strategy_id == strategy_id
+        )
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(404, "Rule not found")
+
+    forwarder = Forwarder(db)
+    start = time.monotonic()
+    try:
+        resp = await forwarder.send_test_request_strategy_rule(strategy_id, rule)
+    except Exception as e:
+        resp = {"success": False, "message": str(e)[:200]}
+    latency = int((time.monotonic() - start) * 1000)
+
+    ok = bool(resp.get("success"))
+    msg = str(resp.get("message", ""))
+    model = await db.get(ModelTable, rule.model_id)
+    if model:
+        model.status = "active" if ok else "inactive"
+        model.last_error = "" if ok else msg[:500]
+    await db.commit()
+
+    provider = await db.get(Provider, rule.provider_id)
+    return {
+        "rule_id": rule.id,
+        "success": ok,
+        "message": msg,
+        "latency_ms": latency,
+        "provider_name": provider.name if provider else str(rule.provider_id),
+        "model_name": model.model_id if model else str(rule.model_id),
+    }

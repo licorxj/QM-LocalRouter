@@ -4,7 +4,8 @@ import { useTheme } from "../providers/theme";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getBackupConfig, updateBackupConfig, createBackup,
-  listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl, getRepositoryStatus, updateRepository,
+  listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl,
+  checkAppUpdate, applyAppUpdate, getUpdateStatus,
 } from "../services/api";
 import { toast } from "../stores/toast";
 import { cn } from "../lib/utils";
@@ -15,7 +16,7 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
-import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, MonitorCog, Github, GitPullRequest, CheckCircle2 } from "lucide-react";
+import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, MonitorCog, Github, CheckCircle2 } from "lucide-react";
 
 /** Compact segmented control for mutually-exclusive small choices. */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -54,59 +55,80 @@ export default function SettingsPage() {
   const [backing, setBacking] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deletingBackup, setDeletingBackup] = useState<string | null>(null);
-  const [repositoryStatus, setRepositoryStatus] = useState<any>(null);
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [updatingRepository, setUpdatingRepository] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [progress, setProgress] = useState<any>(null);
 
-  useEffect(() => {
-    // Surface update availability on load (the backend already implements the
-    // git fetch/compare/update logic via /api/settings/repository).
-    getRepositoryStatus().then(r => setRepositoryStatus(r.data)).catch(() => {});
-  }, []);
-
-  const checkForUpdates = async () => {
+  const runCheck = async (fetchRemote = true) => {
     setCheckingUpdate(true);
     try {
-      const response = await getRepositoryStatus();
-      setRepositoryStatus(response.data);
-      toast({ title: response.data.update_available ? t("settings.updateAvailable") : t("settings.upToDate"), variant: "success" });
-    } catch (error: any) {
-      toast({ title: t("settings.updateCheckFailed"), description: error.response?.data?.detail, variant: "destructive" });
+      const r = await checkAppUpdate(fetchRemote);
+      setUpdateInfo(r.data);
+    } catch (e: any) {
+      setUpdateInfo({ check_failed: true, error: e.response?.data?.detail || e.message });
     } finally {
       setCheckingUpdate(false);
     }
   };
 
-  const installUpdate = async () => {
-    setUpdatingRepository(true);
+  useEffect(() => { runCheck(true); }, []);
+
+  const waitBackendRestart = () => {
+    toast({ title: t("settings.updateRestarting"), variant: "success" });
+    let waited = 0;
+    const poll = async () => {
+      try {
+        const hr = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
+        if (hr.ok) {
+          toast({ title: t("settings.updateRestarted"), variant: "success" });
+          setTimeout(() => window.location.reload(), 600);
+          return;
+        }
+      } catch { /* not back yet */ }
+      waited += 1;
+      if (waited < 40) setTimeout(poll, 1000);
+    };
+    setTimeout(poll, 2500);
+  };
+
+  const runInstall = async () => {
+    setApplying(true);
+    const asset = updateInfo?.mode === "release" ? updateInfo?.asset?.name : undefined;
     try {
-      const response = await updateRepository();
-      setRepositoryStatus(response.data);
-      if (response.data.restarting) {
-        toast({ title: t("settings.updateRestarting"), variant: "success" });
-        // The server restarts itself to load the new Python code; wait for it
-        // to come back, then reload so the browser picks up the fresh build.
-        let waited = 0;
-        const poll = async () => {
+      const r = await applyAppUpdate(asset);
+      const d = r.data || {};
+      if (updateInfo?.mode === "release") {
+        // release mode: poll the backend's download/apply progress
+        const timer = setInterval(async () => {
           try {
-            const hr = await fetch("/api/health", { signal: AbortSignal.timeout(2000) });
-            if (hr.ok) {
-              toast({ title: t("settings.updateRestarted"), variant: "success" });
-              setTimeout(() => window.location.reload(), 600);
-              return;
+            const s = await getUpdateStatus();
+            setProgress(s.data);
+            if (["installer_launched", "exiting", "ready"].includes(s.data.phase)) {
+              clearInterval(timer);
+              toast({ title: t("settings.installerLaunched"), variant: "success" });
+              waitBackendRestart();
+            } else if (s.data.phase === "error") {
+              clearInterval(timer);
+              setApplying(false);
+              setProgress(null);
+              toast({ title: t("settings.updateFailed"), description: s.data.error, variant: "destructive" });
             }
-          } catch { /* not back yet */ }
-          waited += 1;
-          if (waited < 30) setTimeout(poll, 1000);
-        };
-        setTimeout(poll, 2500);
+          } catch { /* transient poll failure */ }
+        }, 800);
+      } else if (d.restarting) {
+        waitBackendRestart();
+      } else if (d.updated) {
+        toast({ title: t("settings.updateComplete"), variant: "success" });
+        setApplying(false);
+        runCheck(true);
       } else {
-        toast({ title: response.data.updated ? t("settings.updateComplete") : t("settings.upToDate"), variant: "success" });
+        toast({ title: t("settings.upToDate"), variant: "success" });
+        setApplying(false);
       }
-    } catch (error: any) {
-      toast({ title: t("settings.updateFailed"), description: error.response?.data?.detail, variant: "destructive" });
-    } finally {
-      setUpdatingRepository(false);
+    } catch (e: any) {
+      toast({ title: t("settings.updateFailed"), description: e.response?.data?.detail, variant: "destructive" });
+      setApplying(false);
     }
   };
 
@@ -229,35 +251,90 @@ export default function SettingsPage() {
               <Label className="text-sm font-medium">{t("settings.sourceCode")}</Label>
               <p className="text-xs text-muted-foreground mt-0.5">{t("settings.sourceCodeDesc")}</p>
             </div>
-            <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => window.open(repositoryStatus?.repository_url || "https://github.com/licorxj/QM-LocalRouter", "_blank", "noopener,noreferrer")}>
+            <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={() => window.open("https://github.com/licorxj/QM-LocalRouter", "_blank", "noopener,noreferrer")}>
               <Github className="h-3.5 w-3.5" />{t("settings.visitGithub")}
             </Button>
           </div>
-          <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <Label className="text-sm font-medium">{t("settings.versionUpdates")}</Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {repositoryStatus
-                  ? repositoryStatus.update_available
-                    ? t("settings.updateAvailableDesc", { count: repositoryStatus.behind_count })
-                    : t("settings.upToDateDesc")
-                  : t("settings.versionUpdatesDesc")}
-              </p>
-              {repositoryStatus && !repositoryStatus.working_tree_clean && <p className="text-xs text-warning mt-1">{t("settings.localChangesWarning")}</p>}
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={checkForUpdates} disabled={checkingUpdate || updatingRepository}>
-                {checkingUpdate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {t("settings.checkUpdates")}
-              </Button>
-              {repositoryStatus?.update_available && (
-                <Button size="sm" className="gap-1.5" onClick={installUpdate} disabled={updatingRepository || !repositoryStatus.working_tree_clean}>
-                  {updatingRepository ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <GitPullRequest className="h-3.5 w-3.5" />}
-                  {t("settings.installUpdate")}
+          <div className="flex flex-col gap-3 border-t pt-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <Label className="text-sm font-medium">{t("settings.versionUpdates")}</Label>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  <span className="text-xs text-muted-foreground">{t("settings.currentVersion")}</span>
+                  <span className="text-sm font-semibold tabular-nums">v{updateInfo?.current_version ?? "…"}</span>
+                  {updateInfo?.build_type === "release" && <Badge variant="success" className="text-[10px]">release</Badge>}
+                  {updateInfo?.latest_version && (
+                    <>
+                      <span className="text-xs text-muted-foreground ml-2">{t("settings.latestVersion")}</span>
+                      <span className="text-sm font-semibold tabular-nums">v{updateInfo.latest_version}</span>
+                    </>
+                  )}
+                </div>
+                <div className="mt-1">
+                  {updateInfo?.check_failed ? (
+                    <p className="text-xs text-destructive break-all">
+                      {t("settings.updateCheckFailed")}{updateInfo.error ? `: ${updateInfo.error}` : ""}
+                    </p>
+                  ) : updateInfo?.update_available ? (
+                    <p className="text-xs text-warning">
+                      {updateInfo.mode === "git" && (updateInfo.git?.behind_count ?? 0) > 0
+                        ? t("settings.updateAvailableDesc", { count: updateInfo.git.behind_count })
+                        : t("settings.releaseAvailableDesc", { version: updateInfo.latest_version })}
+                      {updateInfo.release_url && (
+                        <a href={updateInfo.release_url} target="_blank" rel="noopener noreferrer"
+                           className="ml-1.5 text-info hover:underline">{t("settings.releaseNotes")}</a>
+                      )}
+                    </p>
+                  ) : updateInfo ? (
+                    <p className="text-xs text-success">{t("settings.upToDate")}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">{t("settings.versionUpdatesDesc")}</p>
+                  )}
+                  {updateInfo?.mode === "git" && updateInfo.git && !updateInfo.git.working_tree_clean && (
+                    <p className="text-xs text-warning mt-1">{t("settings.localChangesWarning")}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => runCheck(true)} disabled={checkingUpdate || applying}>
+                  {checkingUpdate ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  {t("settings.checkUpdates")}
                 </Button>
-              )}
-              {repositoryStatus && !repositoryStatus.update_available && <CheckCircle2 className="h-5 w-5 self-center text-success" aria-label={t("settings.upToDate")} />}
+                {updateInfo?.update_available && !applying && (
+                  <Button size="sm" className="gap-1.5" onClick={runInstall}
+                          disabled={checkingUpdate
+                            || (updateInfo.mode === "git" && updateInfo.git && !updateInfo.git.working_tree_clean)}>
+                    <Download className="h-3.5 w-3.5" />
+                    {t("settings.installUpdate")}
+                  </Button>
+                )}
+                {updateInfo && !updateInfo.update_available && !updateInfo.check_failed && (
+                  <CheckCircle2 className="h-5 w-5 self-center text-success" aria-label={t("settings.upToDate")} />
+                )}
+              </div>
             </div>
+            {applying && progress && progress.phase !== "idle" && (
+              <div className="border-t pt-3 space-y-2">
+                <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {progress.phase === "downloading" ? t("settings.downloading")
+                      : progress.phase === "applying" ? t("settings.applyingUpdate")
+                      : ["installer_launched", "exiting"].includes(progress.phase) ? t("settings.installerLaunched")
+                      : progress.message || t("settings.applyingUpdate")}
+                  </span>
+                  {progress.phase === "downloading" && <span className="tabular-nums">{progress.progress}%</span>}
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={progress.phase === "downloading" ? progress.progress : undefined} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="h-full rounded-full bg-primary transition-all"
+                       style={{ width: `${progress.phase === "downloading" ? Math.max(progress.progress, 4) : 100}%` }} />
+                </div>
+                {progress.phase === "downloading" && (
+                  <p className="text-[11px] tabular-nums text-muted-foreground">
+                    {(progress.downloaded / 1048576).toFixed(1)} / {((progress.total || 0) / 1048576).toFixed(1)} MB
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

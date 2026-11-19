@@ -37,6 +37,11 @@
     --radius: 0.75rem;
     --sidebar: 220 24% 97%;
     --sidebar-foreground: 224 12% 42%;
+    /* frosted-glass surfaces: translucent card fill + light glass edge */
+    --glass-border: 0 0% 100%;
+    --card-glass: 0 0% 100%;
+    --card-glass-alpha: 0.62;
+    --glass-edge-alpha: 0.9;
   }
 
   .dark {
@@ -67,6 +72,11 @@
     --ring: 24 94% 55%;
     --sidebar: 222 47% 4%;
     --sidebar-foreground: 214 18% 66%;
+    /* frosted-glass surfaces: navy card fill + light glass edge */
+    --glass-border: 213 45% 90%;
+    --card-glass: 221 35% 8%;
+    --card-glass-alpha: 0.55;
+    --glass-edge-alpha: 0.14;
   }
 }
 
@@ -131,31 +141,209 @@
 }
 
 /* ------------------------------ surfaces ------------------------------ */
-.card-hover {
-  position: relative;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+/* Main canvas: layered color wash so frosted cards always have something to refract. */
+.main-canvas {
+  background-image:
+    radial-gradient(46% 40% at 4% -4%, hsl(20 92% 52% / 0.13), transparent 68%),
+    radial-gradient(42% 44% at 100% 6%, hsl(199 92% 52% / 0.12), transparent 66%),
+    radial-gradient(50% 46% at 92% 104%, hsl(258 82% 62% / 0.1), transparent 70%),
+    radial-gradient(46% 42% at 2% 100%, hsl(160 72% 46% / 0.08), transparent 70%);
+  background-attachment: fixed;
 }
-.card-hover:hover {
-  border-color: hsl(var(--primary) / 0.35);
-  box-shadow: 0 12px 32px -16px hsl(222 60% 3% / 0.55);
-  transform: translateY(-1px);
-}
-.dark .card-hover:hover {
-  box-shadow: 0 12px 32px -16px hsl(0 0% 0% / 0.7);
+.dark .main-canvas {
+  background-image:
+    radial-gradient(46% 40% at 4% -4%, hsl(20 94% 55% / 0.16), transparent 68%),
+    radial-gradient(42% 44% at 100% 6%, hsl(199 94% 55% / 0.13), transparent 66%),
+    radial-gradient(50% 46% at 92% 104%, hsl(258 85% 64% / 0.11), transparent 70%),
+    radial-gradient(46% 42% at 2% 100%, hsl(160 75% 50% / 0.08), transparent 70%);
 }
 
+/* Primary frosted card — translucent fill, blur, light glass edge, inner highlight. */
+.glass-card {
+  background-color: hsl(var(--card-glass) / var(--card-glass-alpha));
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid hsl(0 0% 100% / 0.95);
+  outline: 1px solid hsl(var(--border) / 0.8);
+  outline-offset: -2px;
+  box-shadow:
+    0 1px 2px hsl(222 30% 30% / 0.04),
+    0 8px 28px -14px hsl(222 40% 22% / 0.22),
+    inset 0 1px 0 hsl(0 0% 100% / 0.9);
+}
+.dark .glass-card {
+  outline: none;
+  border-color: hsl(var(--glass-border) / var(--glass-edge-alpha));
+  box-shadow:
+    0 1px 2px hsl(0 0% 0% / 0.3),
+    0 14px 40px -18px hsl(0 0% 0% / 0.75),
+    inset 0 1px 0 hsl(var(--glass-border) / 0.12);
+}
+
+/* Subtle frosted surface for nested / tertiary blocks and code snippets. */
+.glass-subtle {
+  background-color: hsl(var(--muted) / 0.55);
+  -webkit-backdrop-filter: blur(10px) saturate(1.25);
+  backdrop-filter: blur(10px) saturate(1.25);
+  border: 1px solid hsl(var(--border));
+}
+.dark .glass-subtle {
+  border-color: hsl(var(--glass-border) / 0.1);
+}
+
+/* Dashed empty-state variant keeps the frosted fill but drops the shadow. */
+.glass-card.glass-dashed {
+  background-color: hsl(var(--card-glass) / calc(var(--card-glass-alpha) * 0.5));
+  border-style: dashed;
+  box-shadow: none;
+}
+
+/* Frosted popover surface (dialogs / menus / tooltips) with a light glass edge. */
+.glass-popover {
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  backdrop-filter: blur(22px) saturate(1.4);
+}
+.dark .glass-popover {
+  border-color: hsl(var(--glass-border) / 0.18);
+}
+
+.card-hover {
+  position: relative;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease, background-color 0.25s ease;
+}
+.card-hover:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 14px 32px -16px hsl(222 45% 22% / 0.28), 0 0 0 1px hsl(var(--primary) / 0.08), inset 0 1px 0 hsl(0 0% 100% / 0.8);
+  transform: translateY(-2px);
+}
+.dark .card-hover:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 18px 42px -16px hsl(0 0% 0% / 0.8), 0 0 28px -14px hsl(var(--primary) / 0.35), inset 0 1px 0 hsl(var(--glass-border) / 0.14);
+}
+
+/* Back-compat alias for the old dormant .glass class. */
 .glass {
   background: hsl(var(--popover) / 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
   backdrop-filter: blur(20px) saturate(1.3);
   border: 1px solid hsl(var(--border));
 }
 
+/* ------------------------- sidebar · route console ------------------- */
+/* Refined navigation rail echoing the logo's navy canvas + ember/cyan light trails. */
 .sidebar-gradient {
-  background: hsl(var(--sidebar));
+  position: relative;
+  background-color: hsl(var(--sidebar));
+  background-image:
+    radial-gradient(120% 55% at 0% 0%, hsl(var(--primary) / 0.08), transparent 58%),
+    linear-gradient(to right, hsl(var(--foreground) / 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--foreground) / 0.025) 1px, transparent 1px);
+  background-size: auto, 22px 22px, 22px 22px;
   border-right: 1px solid hsl(var(--border));
 }
 .dark .sidebar-gradient {
-  background: linear-gradient(180deg, hsl(var(--sidebar)) 0%, hsl(222 45% 5%) 100%);
+  background-color: hsl(var(--sidebar));
+  background-image:
+    radial-gradient(120% 55% at 0% 0%, hsl(var(--primary) / 0.13), transparent 60%),
+    radial-gradient(90% 40% at 100% 100%, hsl(var(--info) / 0.06), transparent 70%),
+    linear-gradient(to right, hsl(214 30% 80% / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(214 30% 80% / 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 22px 22px, 22px 22px;
+}
+
+/* Brand mark: soft radial halo behind the routed-key logo. */
+.nav-logo-halo {
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  pointer-events: none;
+  background: radial-gradient(circle, hsl(var(--primary) / 0.3), hsl(var(--info) / 0.12) 45%, transparent 70%);
+  filter: blur(6px);
+  animation: pulse-dot 3.6s ease-in-out infinite;
+}
+.nav-logo {
+  filter: drop-shadow(0 4px 10px hsl(var(--primary) / 0.3));
+}
+
+/* Group captions */
+.nav-section-label {
+  padding: 4px 12px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground) / 0.7);
+}
+
+/* Active item: tinted gradient fill + hairline inset ring. */
+.nav-link-active {
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.16), hsl(var(--primary) / 0.04) 70%, transparent);
+  box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.08);
+  color: hsl(var(--primary));
+}
+.dark .nav-link-active {
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.22), hsl(var(--primary) / 0.06) 70%, transparent);
+}
+
+/* Glowing rail + node — an energized trace on the route diagram. */
+.nav-rail {
+  position: absolute;
+  left: -3px;
+  top: 50%;
+  width: 3px;
+  height: 24px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, hsl(var(--primary)), hsl(38 96% 62%));
+  box-shadow: 0 0 12px 1px hsl(var(--primary) / 0.65);
+}
+.nav-rail-collapsed {
+  left: 2px;
+  height: 20px;
+}
+.nav-rail-node {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18), 0 0 10px hsl(var(--primary) / 0.9);
+}
+
+/* Icon tiles — filled with the ember gradient only when active. */
+.nav-icon-tile {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 9px;
+  color: hsl(var(--muted-foreground));
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+.group:hover .nav-icon-tile:not(.nav-icon-tile-active) {
+  background: hsl(var(--foreground) / 0.06);
+  color: hsl(var(--foreground));
+}
+.nav-icon-tile-active {
+  color: hsl(var(--primary-foreground));
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(38 96% 58%));
+  box-shadow: 0 6px 14px -5px hsl(var(--primary) / 0.75), inset 0 1px 0 hsl(0 0% 100% / 0.25);
+}
+
+/* Small "current page" marker on the right edge. */
+.nav-active-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 8px hsl(var(--primary) / 0.9);
+  opacity: 0.85;
 }
 
 .gradient-text {
@@ -164,6 +352,14 @@
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
+}
+
+/* Route-blue accent for the "Router" word in the brand title. */
+.text-route-blue {
+  color: hsl(199 95% 62%);
+}
+.dark .text-route-blue {
+  color: hsl(200 96% 71%);
 }
 
 .divider-glow {
@@ -199,6 +395,43 @@
 .stagger-4 { animation-delay: 0.16s; }
 .stagger-5 { animation-delay: 0.2s; }
 .stagger-6 { animation-delay: 0.24s; }
+
+/* --------------------------- monitor page ------------------------------ */
+/* 虚线贝塞尔连线：描边从 0 生长到全长，脉冲点沿路径流动 */
+@keyframes monitor-draw {
+  from { stroke-dashoffset: var(--path-len, 600); }
+  to { stroke-dashoffset: 0; }
+}
+.monitor-beam {
+  stroke-dasharray: 6 8;
+  animation: monitor-beam-flow 1.1s linear infinite;
+}
+@keyframes monitor-beam-flow {
+  to { stroke-dashoffset: -14; }
+}
+.monitor-path-draw {
+  stroke-dasharray: var(--path-len, 600);
+  animation: monitor-draw 0.55s ease-out both;
+}
+@keyframes monitor-pulse {
+  0% { r: 3; opacity: 0; }
+  15% { opacity: 1; }
+  100% { r: 12; opacity: 0; }
+}
+.monitor-pulse-ring { animation: monitor-pulse 1.3s ease-out infinite; }
+@keyframes monitor-node-pop {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: scale(1); }
+}
+.monitor-node-pop { animation: monitor-node-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes monitor-log-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.monitor-log-in { animation: monitor-log-in 0.4s ease-out both; }
+.monitor-log-scroll::-webkit-scrollbar { width: 6px; }
+.monitor-log-scroll::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 999px; }
+.monitor-log-scroll { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

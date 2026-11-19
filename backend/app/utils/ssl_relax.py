@@ -108,6 +108,65 @@ def verify_option(level: int):
     return ctx
 
 
+# (host, level) -> 共享 AsyncClient：进程内懒创建 + 常驻复用。
+# 每请求新建 client 的代价极高：构造函数同步加载 Windows 证书库（本机实测
+# ~0.6s/次，纯 CPU 且阻塞整个事件循环，下游并发请求会在"建连接"这一步排队），
+# 且不复用连接导致每次重新 TCP+TLS 握手。改为按 (host, 档位) 缓存共享。
+_clients: dict[tuple[str, int], httpx.AsyncClient] = {}
+
+
+def get_client(url: str, level: int | None = None) -> httpx.AsyncClient:
+    """取 (host, 校验档位) 对应的共享 AsyncClient，懒创建、进程内复用。
+
+    timeout 不绑定 client（各策略/接口超时不同）：调用方每次请求显式传
+    ``timeout=``；client 默认只保留 15s 连接超时兜底。返回的 client 禁止
+    ``async with``/``aclose()``，由 aclose_all() 在应用 shutdown 时统一关闭。
+    """
+    host = host_of(url)
+    if level is None:
+        level = current_level(host) if url else 0
+    key = (host, level)
+    c = _clients.get(key)
+    if c is None:
+        c = httpx.AsyncClient(
+            timeout=httpx.Timeout(None, connect=15.0),
+            trust_env=False,
+            verify=verify_option(level),
+            # keepalive 默认仅 5s：智能体类间歇流量几乎每次都要重新 TCP+TLS
+            # 握手（跨境上游一个 RTT 100-300ms，握手就是 2-3 个 RTT）。
+            # 延长到 5 分钟，让上游连接保持热连接供复用。
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50,
+                                keepalive_expiry=300.0),
+        )
+        _clients[key] = c
+    return c
+
+
+async def aclose_all() -> None:
+    """关闭全部共享 client（应用 lifespan shutdown 时调用）。"""
+    while _clients:
+        _, c = _clients.popitem()
+        try:
+            await c.aclose()
+        except Exception:
+            pass
+
+
+async def request(method: str, url: str, *, timeout: float | int = 15, **kwargs) -> httpx.Response:
+    """管理/探测端点用的共享池请求。
+
+    与 request_with_ssl_fallback 的区别：这里不做逐级降级，只复用 (host, level)
+    共享 client（按已记忆档位），避免每次新建 AsyncClient 触发 Windows 证书库
+    同步加载（~0.6s 阻塞事件循环）+ 重新 TCP/TLS 握手。调用方不要关闭 client。
+    """
+    return await get_client(url).request(method, url, timeout=timeout, **kwargs)
+
+
+def shared_client(url: str) -> httpx.AsyncClient:
+    """返回共享 client 供需要多次请求同一 host 的端点复用（禁止关闭）。"""
+    return get_client(url)
+
+
 def client(timeout: float | int = 120, url: str | None = None,
            level: int | None = None) -> httpx.AsyncClient:
     """构造 AsyncClient；给了 url 就自动套用该 host 已记忆的降级档位。"""
@@ -132,20 +191,20 @@ async def request_with_ssl_fallback(method: str, url: str, *, timeout: float | i
 
     last_exc: Exception | None = None
     for idx, lv in enumerate(chain):
-        async with client(timeout, level=lv) as c:
-            try:
-                return await c.request(method, url, **kwargs)
-            except Exception as e:
-                last_exc = e
-                has_next = idx + 1 < len(chain)
-                if has_next and relax_allowed(host) and is_hostname_mismatch(e):
-                    nxt = chain[idx + 1]
-                    print(
-                        f"[ssl-relax] hostname mismatch on {host} "
-                        f"({str(e)[:120]}) → 降级到 level {nxt} 重试",
-                        flush=True,
-                    )
-                    remember_level(host, nxt)
-                    continue
-                raise
+        c = get_client(url, level=lv)
+        try:
+            return await c.request(method, url, timeout=timeout, **kwargs)
+        except Exception as e:
+            last_exc = e
+            has_next = idx + 1 < len(chain)
+            if has_next and relax_allowed(host) and is_hostname_mismatch(e):
+                nxt = chain[idx + 1]
+                print(
+                    f"[ssl-relax] hostname mismatch on {host} "
+                    f"({str(e)[:120]}) → 降级到 level {nxt} 重试",
+                    flush=True,
+                )
+                remember_level(host, nxt)
+                continue
+            raise
     raise last_exc  # pragma: no cover

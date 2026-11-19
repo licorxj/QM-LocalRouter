@@ -69,6 +69,8 @@ now call the models behind those CLIs:
 | Providers (keys / models / $0 free models) | AI Chat |
 |:---:|:---:|
 | ![Providers](docs/images/providers.png) | ![Chat](docs/images/chat.png) |
+| **Routing Strategies** | **Sync Provider Models (74 models, batch import)** |
+| ![Strategies](docs/images/strategies.png) | ![Sync models](docs/images/sync-models.png) |
 | **Request Logs** | **Light Theme** |
 | ![Logs](docs/images/logs.png) | ![Light dashboard](docs/images/dashboard-light.png) |
 

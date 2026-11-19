@@ -43,6 +43,8 @@ import uuid
 
 import httpx
 
+from app.utils import ssl_relax
+
 DEFAULT_BASE_URL = "http://127.0.0.1:4096"   # opencode serve 固定端口（10001 常被其他软件占用）
 DEFAULT_MODEL = "opencode/ling-3.1-flash-free"
 
@@ -110,6 +112,46 @@ def _normalize_text(content):
                     parts.append(p.get("text", ""))
         return "\n".join(x for x in parts if x)
     return str(content)
+
+
+def _extract_image_parts(content) -> list[dict]:
+    """从 OpenAI content 数组里提取图片块，转成 OpenCode file part。
+
+    OpenCode session message 的 part 形态：
+    {"type":"file", "mime":"image/png", "filename":"image.png", "url":"<data-url|http-url>"}
+    """
+    if not isinstance(content, list):
+        return []
+    out: list[dict] = []
+    for b in content:
+        if not isinstance(b, dict):
+            continue
+        btype = b.get("type")
+        if btype == "image_url":
+            img = b.get("image_url") or {}
+            url = img.get("url") if isinstance(img, dict) else img
+            if not url:
+                continue
+            mime = "image/png"
+            if isinstance(url, str) and url.startswith("data:"):
+                try:
+                    mime = url[5:].split(";", 1)[0].split(",", 1)[0] or "image/png"
+                except Exception:
+                    mime = "image/png"
+            out.append({"type": "file", "mime": mime,
+                        "filename": "image.png", "url": url})
+        elif btype == "image":
+            # 已经是 Anthropic 形态
+            source = b.get("source") or {}
+            if source.get("type") == "base64":
+                media = source.get("media_type", "image/png")
+                url = f"data:{media};base64,{source.get('data', '')}"
+            else:
+                url = source.get("url", "")
+            if url:
+                out.append({"type": "file", "mime": source.get("media_type", "image/png"),
+                            "filename": "image.png", "url": url})
+    return out
 
 
 def _tool_call_id() -> str:
@@ -262,8 +304,9 @@ class OpenCodeClient:
         url = self.base_url + path
         headers = {"Content-Type": "application/json", **_auth_header(self.password)}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
-                resp = await client.request(method, url, json=body, headers=headers)
+            # 共享 client（复用连接，省去每请求的证书库加载），timeout 按请求覆盖
+            client = ssl_relax.get_client(url)
+            resp = await client.request(method, url, json=body, headers=headers, timeout=self.timeout)
         except httpx.TimeoutException:
             raise OpenCodeError(504, "OpenCode 服务端超时", "timeout")
         except httpx.HTTPError as e:
@@ -337,9 +380,9 @@ class OpenCodeClient:
 
     async def _delete_session(self, session_id: str) -> None:
         try:
-            async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
-                await client.request("DELETE", f"{self.base_url}/session/{session_id}",
-                                    headers=_auth_header(self.password))
+            client = ssl_relax.get_client(f"{self.base_url}/session/{session_id}")
+            await client.request("DELETE", f"{self.base_url}/session/{session_id}",
+                                 headers=_auth_header(self.password), timeout=10)
         except Exception:
             pass
 
@@ -374,9 +417,13 @@ class OpenCodeClient:
                     parts.append({"type": "text", "text": f"TOOL_RESULT[{name}]: {text}"})
                 continue
             text = _normalize_text(content)
-            if not text:
+            image_parts = _extract_image_parts(content)
+            if not text and not image_parts:
                 continue
-            parts.append({"type": "text", "text": f"{role.upper()}: {text}"})
+            if text:
+                parts.append({"type": "text", "text": f"{role.upper()}: {text}"})
+            # 图片作为 file part 一并下发（保持与文本同一轮 prompt）
+            parts.extend(image_parts)
         return ("\n\n".join(system_chunks) if system_chunks else None), parts
 
     # ----------------------------------------------------------------- SSE
@@ -389,33 +436,35 @@ class OpenCodeClient:
         url = self.base_url + "/global/event"
         headers = {**_auth_header(self.password), "Accept": "text/event-stream"}
         seen_ready = False
-        async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10), trust_env=False) as client:
-            async with client.stream("GET", url, headers=headers) as resp:
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if not payload:
-                        continue
-                    try:
-                        env = json.loads(payload)
-                    except ValueError:
-                        continue
-                    if not isinstance(env, dict):
-                        continue
-                    # 真实结构为 {payload:{type,properties}}，SDK 会解包，这里手动取
-                    ev = env.get("payload") if isinstance(env.get("payload"), dict) else env
-                    etype = ev.get("type")
-                    if not etype or etype == "sync":
-                        # "sync" 是同一事件的重复推送（实测约占 2/3），直接丢弃
-                        if not seen_ready:
-                            seen_ready = True
-                            ready.set()
-                        continue
+        # 共享 client；SSE 订阅为长连接，read 超时放无限、仅连接超时 10s 兜底
+        client = ssl_relax.get_client(url)
+        async with client.stream("GET", url, headers=headers,
+                                 timeout=httpx.Timeout(None, connect=10)) as resp:
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload:
+                    continue
+                try:
+                    env = json.loads(payload)
+                except ValueError:
+                    continue
+                if not isinstance(env, dict):
+                    continue
+                # 真实结构为 {payload:{type,properties}}，SDK 会解包，这里手动取
+                ev = env.get("payload") if isinstance(env.get("payload"), dict) else env
+                etype = ev.get("type")
+                if not etype or etype == "sync":
+                    # "sync" 是同一事件的重复推送（实测约占 2/3），直接丢弃
                     if not seen_ready:
                         seen_ready = True
                         ready.set()
-                    yield {"type": etype, "properties": ev.get("properties") or {}}
+                    continue
+                if not seen_ready:
+                    seen_ready = True
+                    ready.set()
+                yield {"type": etype, "properties": ev.get("properties") or {}}
 
     async def _collect(self, session_id: str, on_delta=None, timeout: float | None = None,
                        on_ready=None):

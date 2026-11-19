@@ -31,6 +31,231 @@ def _parse_data_url(url: str) -> tuple[str, str] | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# 工具 / 联网搜索 通用映射（跨协议透传）
+#
+# 各协议对「函数工具」与「内置联网搜索」的表达不同：
+#   - OpenAI chat:  tools=[{type:function,function:{...}}]，搜索用
+#                   tools=[{type:web_search,...}] 或 web_search_options 标量
+#   - OpenAI resp:  tools=[{type:function,...}|{type:web_search,...}]
+#   - Claude:       tools=[{name,input_schema}|{type:web_search_20250305,...}]
+#   - Gemini:       tools=[{functionDeclarations:[...]}|{google_search:{}}]
+# 下面一组纯函数把这些形态互相映射，保证工具 / 搜索请求不丢失。
+# ---------------------------------------------------------------------------
+
+# 被各协议视为「内置联网搜索」的工具 type / key
+_SEARCH_TYPES = {
+    "web_search", "web_search_preview", "web_search_20250305",
+    "web_search_preview_2025_03_11",
+}
+_SEARCH_KEYS = ("google_search", "google_search_retrieval", "web_search")
+
+
+def _is_search_tool(t: dict) -> bool:
+    if not isinstance(t, dict):
+        return False
+    if t.get("type") in _SEARCH_TYPES:
+        return True
+    return any(k in t for k in _SEARCH_KEYS)
+
+
+def _iter_function_tools(tools) -> list[dict]:
+    """把任意协议形态的 tools 归一为 OpenAI function 工具列表。
+
+    兼容 chat 形态 {type:function,function:{...}}、Responses 形态
+    {type:function,name,parameters,...}、Claude 形态 {name,input_schema}、
+    Gemini 形态 {functionDeclarations:[...]}。
+    """
+    out: list[dict] = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        # Gemini functionDeclarations
+        for fd in t.get("functionDeclarations") or t.get("function_declarations") or []:
+            if isinstance(fd, dict) and fd.get("name"):
+                out.append({"type": "function", "function": {
+                    "name": fd.get("name", ""),
+                    "description": fd.get("description", ""),
+                    "parameters": fd.get("parameters") or {"type": "object", "properties": {}},
+                }})
+        # OpenAI chat 标准形态
+        fn = t.get("function")
+        if isinstance(fn, dict) and fn.get("name"):
+            out.append({"type": "function", "function": fn})
+            continue
+        # Responses / Claude 平铺形态
+        name = t.get("name")
+        if name and t.get("type") in (None, "function"):
+            params = t.get("parameters") or t.get("input_schema") or {"type": "object", "properties": {}}
+            out.append({"type": "function", "function": {
+                "name": name,
+                "description": t.get("description", ""),
+                "parameters": params,
+            }})
+    return out
+
+
+def _has_search_tool(tools) -> bool:
+    return any(_is_search_tool(t) for t in (tools or []))
+
+
+def _openai_tools_to_claude(tools, web_search_options=None) -> list[dict]:
+    """OpenAI chat/Responses tools -> Claude tools（函数 + 联网搜索）。"""
+    out: list[dict] = []
+    for fn in _iter_function_tools(tools):
+        f = fn["function"]
+        out.append({
+            "name": f.get("name", ""),
+            "description": f.get("description", ""),
+            "input_schema": f.get("parameters") or {"type": "object", "properties": {}},
+        })
+    if _has_search_tool(tools) or web_search_options is not None:
+        out.append({"type": "web_search_20250305", "name": "web_search"})
+    return out
+
+
+def _openai_tools_to_gemini(tools, web_search_options=None) -> list[dict]:
+    """OpenAI chat/Responses tools -> Gemini tools（函数 + google_search）。"""
+    out: list[dict] = []
+    decls = []
+    for fn in _iter_function_tools(tools):
+        f = fn["function"]
+        decls.append({
+            "name": f.get("name", ""),
+            "description": f.get("description", ""),
+            "parameters": f.get("parameters") or {"type": "object", "properties": {}},
+        })
+    if decls:
+        out.append({"functionDeclarations": decls})
+    if _has_search_tool(tools) or web_search_options is not None:
+        out.append({"google_search": {}})
+    return out
+
+
+def _openai_tool_choice_to_claude(tool_choice):
+    """OpenAI tool_choice -> Claude tool_choice。"""
+    if isinstance(tool_choice, str):
+        if tool_choice == "required":
+            return {"type": "any"}
+        if tool_choice == "none":
+            return {"type": "none"}
+        return {"type": "auto"}
+    if isinstance(tool_choice, dict):
+        fn = (tool_choice.get("function") or {})
+        if fn.get("name"):
+            return {"type": "tool", "name": fn["name"]}
+    return {"type": "auto"}
+
+
+def _openai_tool_choice_to_gemini(tool_choice):
+    """OpenAI tool_choice -> Gemini toolConfig.functionCallingConfig.mode。"""
+    if isinstance(tool_choice, str):
+        return {"mode": {"required": "ANY", "none": "NONE"}.get(tool_choice, "AUTO")}
+    if isinstance(tool_choice, dict) and (tool_choice.get("function") or {}).get("name"):
+        return {"mode": "ANY", "allowedFunctionNames": [tool_choice["function"]["name"]]}
+    return {"mode": "AUTO"}
+
+
+def _claude_tools_to_openai(tools) -> tuple[list[dict], bool]:
+    """Claude tools -> (OpenAI function tools, has_search)."""
+    fns: list[dict] = []
+    has_search = False
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        ttype = t.get("type", "")
+        if _is_search_tool(t):
+            has_search = True
+            continue
+        name = t.get("name")
+        if name:
+            fns.append({"type": "function", "function": {
+                "name": name,
+                "description": t.get("description", ""),
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+            }})
+    return fns, has_search
+
+
+def _gemini_tools_to_openai(tools) -> tuple[list[dict], bool]:
+    """Gemini tools -> (OpenAI function tools, has_search)."""
+    fns: list[dict] = []
+    has_search = False
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        if _is_search_tool(t):
+            has_search = True
+        for fd in t.get("functionDeclarations") or t.get("function_declarations") or []:
+            if isinstance(fd, dict) and fd.get("name"):
+                fns.append({"type": "function", "function": {
+                    "name": fd.get("name", ""),
+                    "description": fd.get("description", ""),
+                    "parameters": fd.get("parameters") or {"type": "object", "properties": {}},
+                }})
+    return fns, has_search
+
+
+def _tool_result_text(content) -> str:
+    """把工具结果 content（str 或 block 列表）压成 Claude/Gemini 需要的纯文本/JSON。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts = []
+        for b in content:
+            if isinstance(b, str):
+                texts.append(b)
+            elif isinstance(b, dict):
+                if b.get("type") == "text" and b.get("text"):
+                    texts.append(b["text"])
+                elif b.get("type") == "image_url":
+                    texts.append(json.dumps(b, ensure_ascii=False))
+        return "\n".join(texts) if texts else json.dumps(content, ensure_ascii=False)
+    if content is None:
+        return ""
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _openai_assistant_to_claude_blocks(msg: dict) -> tuple[list[dict], list[dict]]:
+    """OpenAI assistant 消息 -> (Claude content blocks, 待合并的 tool_use blocks)。"""
+    blocks = _convert_openai_content_to_claude(msg.get("content", ""))
+    tool_uses = []
+    for tc in msg.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except (ValueError, TypeError):
+                args = {}
+        tool_uses.append({"type": "tool_use", "id": tc.get("id") or _tool_call_id_fallback(),
+                          "name": fn.get("name", ""), "input": args or {}})
+    return blocks, tool_uses
+
+
+def _openai_assistant_to_gemini_parts(msg: dict) -> list[dict]:
+    """OpenAI assistant 消息 -> Gemini model parts（含 functionCall）。"""
+    parts = _convert_openai_content_to_gemini_parts(msg.get("content", "")) or [{"text": ""}]
+    for tc in msg.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except (ValueError, TypeError):
+                args = {}
+        parts.append({"functionCall": {"name": fn.get("name", ""), "args": args or {}}})
+    return parts
+
+
+def _tool_call_id_fallback() -> str:
+    return "toolu_" + uuid.uuid4().hex[:16]
+
+
 def _convert_openai_content_to_claude(content) -> list[dict]:
     """OpenAI content blocks -> Claude content blocks.
 
@@ -96,7 +321,15 @@ def openai_to_claude(body: dict) -> tuple[dict, dict]:
             blocks = _convert_openai_content_to_claude(content)
             system_parts.append("\n".join(b["text"] for b in blocks if b["type"] == "text"))
         elif role == "assistant":
-            claude_messages.append({"role": "assistant", "content": content})
+            blocks, tool_uses = _openai_assistant_to_claude_blocks(msg)
+            claude_messages.append({"role": "assistant", "content": blocks + tool_uses})
+        elif role == "tool":
+            # OpenAI 工具结果消息 -> Claude tool_result（归到 user turn）
+            tool_call_id = msg.get("tool_call_id") or ""
+            claude_messages.append({"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": tool_call_id,
+                "content": _tool_result_text(content),
+            }]})
         else:
             claude_messages.append({"role": "user", "content": _convert_openai_content_to_claude(content)})
 
@@ -114,6 +347,13 @@ def openai_to_claude(body: dict) -> tuple[dict, dict]:
     if body.get("stream"):
         claude_body["stream"] = True
 
+    # 透传工具调用 / 联网搜索：函数工具 + 内置搜索工具 + tool_choice
+    ctools = _openai_tools_to_claude(body.get("tools"), body.get("web_search_options"))
+    if ctools:
+        claude_body["tools"] = ctools
+        if body.get("tool_choice") is not None:
+            claude_body["tool_choice"] = _openai_tool_choice_to_claude(body["tool_choice"])
+
     return claude_body, {"anthropic-version": "2023-06-01", "content-type": "application/json"}
 
 
@@ -130,8 +370,24 @@ def openai_to_gemini(body: dict) -> tuple[dict, dict]:
             parts = _convert_openai_content_to_gemini_parts(content) or [{"text": ""}]
             system_instruction = {"parts": parts}
         elif role == "assistant":
-            parts = _convert_openai_content_to_gemini_parts(content) or [{"text": ""}]
+            parts = _openai_assistant_to_gemini_parts(msg)
             contents.append({"role": "model", "parts": parts})
+        elif role == "tool":
+            # OpenAI 工具结果 -> Gemini functionResponse（user 角色）
+            name = msg.get("name") or ""
+            resp = msg.get("content", "")
+            if isinstance(resp, str):
+                try:
+                    resp_obj = json.loads(resp) if resp else {}
+                except (ValueError, TypeError):
+                    resp_obj = {"output": resp}
+            elif isinstance(resp, (dict, list)):
+                resp_obj = resp
+            else:
+                resp_obj = {"output": str(resp)}
+            contents.append({"role": "user", "parts": [{
+                "functionResponse": {"name": name, "response": resp_obj},
+            }]})
         else:
             parts = _convert_openai_content_to_gemini_parts(content) or [{"text": ""}]
             contents.append({"role": "user", "parts": parts})
@@ -149,6 +405,13 @@ def openai_to_gemini(body: dict) -> tuple[dict, dict]:
         gen_config["topP"] = body["top_p"]
     if gen_config:
         gemini_body["generationConfig"] = gen_config
+
+    # 透传工具调用 / 联网搜索：函数声明 + google_search + toolConfig
+    gtools = _openai_tools_to_gemini(body.get("tools"), body.get("web_search_options"))
+    if gtools:
+        gemini_body["tools"] = gtools
+        if body.get("tool_choice") is not None:
+            gemini_body["toolConfig"] = {"functionCallingConfig": _openai_tool_choice_to_gemini(body["tool_choice"])}
 
     return gemini_body, {"content-type": "application/json"}
 
@@ -234,12 +497,47 @@ def openai_response_to_openai(data: dict, model: str) -> dict:
 
 
 def claude_response_to_openai(data: dict, model: str) -> dict:
-    """Convert a complete Claude response to OpenAI format."""
-    content = ""
-    for block in data.get("content", []):
-        if block.get("type") == "text":
-            content += block.get("text", "")
+    """Convert a complete Claude response to OpenAI format.
 
+    保留文本内容、图片块与 tool_use（工具调用），保证工具/图片能力不丢失。
+    """
+    content_blocks = []
+    tool_calls = []
+    for i, block in enumerate(data.get("content", [])):
+        btype = block.get("type")
+        if btype == "text":
+            content_blocks.append({"type": "text", "text": block.get("text", "")})
+        elif btype == "image":
+            source = block.get("source") or {}
+            if source.get("type") == "base64":
+                media = source.get("media_type", "image/png")
+                data_url = f"data:{media};base64,{source.get('data', '')}"
+            elif source.get("url"):
+                data_url = source["url"]
+            else:
+                continue
+            content_blocks.append({"type": "image_url", "image_url": {"url": data_url}})
+        elif btype == "tool_use":
+            args = block.get("input")
+            if not isinstance(args, str):
+                args = json.dumps(args if args is not None else {}, ensure_ascii=False)
+            tool_calls.append({
+                "id": block.get("id") or f"call_{uuid.uuid4().hex[:16]}",
+                "type": "function",
+                "function": {"name": block.get("name", ""), "arguments": args},
+            })
+    # 只有文本且单个文本块时，content 用纯字符串（兼容性最好）；否则用数组
+    if content_blocks and all(b.get("type") == "text" for b in content_blocks):
+        content: object = "\n".join(b.get("text", "") for b in content_blocks)
+    else:
+        content = content_blocks
+
+    message: dict = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    usage = data.get("usage") or {}
+    stop_reason = data.get("stop_reason") or ""
+    finish = "tool_calls" if tool_calls else ("length" if stop_reason == "max_tokens" else "stop")
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -247,15 +545,15 @@ def claude_response_to_openai(data: dict, model: str) -> dict:
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
+            "message": message,
+            "finish_reason": finish,
         }],
         "usage": {
-            "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
-            "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+            "prompt_tokens": usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
             "total_tokens": (
-                data.get("usage", {}).get("input_tokens", 0)
-                + data.get("usage", {}).get("output_tokens", 0)
+                usage.get("input_tokens", 0)
+                + usage.get("output_tokens", 0)
             ),
         },
     }
@@ -275,14 +573,40 @@ def _gemini_parts_to_text(parts: list) -> str:
 
 
 def gemini_response_to_openai(data: dict, model: str) -> dict:
-    """Convert a complete Gemini response to OpenAI format."""
+    """Convert a complete Gemini response to OpenAI format.
+
+    保留文本、图片（markdown data URI）与 functionCall（工具调用）。
+    """
     candidates = data.get("candidates", [])
     content = ""
+    tool_calls = []
+    finish = "stop"
     if candidates:
-        parts = candidates[0].get("content", {}).get("parts", [])
+        cand = candidates[0]
+        parts = cand.get("content", {}).get("parts", [])
         content = _gemini_parts_to_text(parts)
+        for i, p in enumerate(parts):
+            fc = p.get("functionCall") or p.get("function_call")
+            if not fc:
+                continue
+            args = fc.get("args")
+            if not isinstance(args, str):
+                args = json.dumps(args if args is not None else {}, ensure_ascii=False)
+            tool_calls.append({
+                "id": f"call_{uuid.uuid4().hex[:16]}",
+                "type": "function",
+                "function": {"name": fc.get("name", ""), "arguments": args},
+            })
+        fr = cand.get("finishReason") or ""
+        if fr in ("MAX_TOKENS",):
+            finish = "length"
+        elif tool_calls or fr in ("STOP", "FUNCTION_CALL"):
+            finish = "tool_calls" if tool_calls else "stop"
 
-    usage = data.get("usageMetadata", {})
+    usage = data.get("usageMetadata") or {}
+    message: dict = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
@@ -290,8 +614,8 @@ def gemini_response_to_openai(data: dict, model: str) -> dict:
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
+            "message": message,
+            "finish_reason": finish,
         }],
         "usage": {
             "prompt_tokens": usage.get("promptTokenCount", 0),
@@ -301,19 +625,57 @@ def gemini_response_to_openai(data: dict, model: str) -> dict:
     }
 
 def openai_to_claude_response(data: dict) -> dict:
-    "Convert an OpenAI-format completion response to Claude Messages API format."
+    """Convert an OpenAI-format completion response to Claude Messages API format.
+
+    保留文本、图片块与 tool_calls（作为 tool_use）。
+    """
     choices = data.get("choices", [])
     message = choices[0].get("message", {}) if choices else {}
-    content_text = message.get("content", "")
     usage = data.get("usage", {})
 
+    content = []
+    text = _responses_text_of(message.get("content"))
+    if text:
+        content.append({"type": "text", "text": text})
+    # 图片：OpenAI content 数组里的 image_url
+    raw_content = message.get("content")
+    if isinstance(raw_content, list):
+        for b in raw_content:
+            if isinstance(b, dict) and b.get("type") == "image_url":
+                url = (b.get("image_url") or {}).get("url", "")
+                data_url = _parse_data_url(url)
+                if data_url:
+                    content.append({"type": "image", "source": {
+                        "type": "base64", "media_type": data_url[0], "data": data_url[1]}})
+                elif url.startswith("http"):
+                    content.append({"type": "image", "source": {"type": "url", "url": url}})
+    # 工具调用
+    for tc in message.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except (ValueError, TypeError):
+                args = {}
+        content.append({"type": "tool_use", "id": tc.get("id") or _tool_call_id_fallback(),
+                        "name": fn.get("name", ""), "input": args or {}})
+    if not content:
+        content = [{"type": "text", "text": ""}]
+
+    has_tools = any(b.get("type") == "tool_use" for b in content)
+    finish = choices[0].get("finish_reason") if choices else "stop"
+    stop_reason = "tool_use" if has_tools else ("max_tokens" if finish == "length" else "end_turn")
     return {
-        "id": data.get("id", ""),
+        "id": data.get("id") or ("msg_" + uuid.uuid4().hex[:16]),
         "type": "message",
         "role": "assistant",
-        "content": [{"type": "text", "text": content_text}],
+        "content": content,
         "model": data.get("model", ""),
-        "stop_reason": "end_turn",
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
         "usage": {
             "input_tokens": usage.get("prompt_tokens", 0),
             "output_tokens": usage.get("completion_tokens", 0),
@@ -325,9 +687,34 @@ def openai_to_gemini_response(data: dict) -> dict:
     "Convert an OpenAI-format completion response to Gemini GenerateContent format."
     choices = data.get("choices", [])
     message = choices[0].get("message", {}) if choices else {}
-    content_text = message.get("content", "")
     usage = data.get("usage", {})
     finish_reason = choices[0].get("finish_reason", "stop") if choices else "stop"
+
+    parts = []
+    text = _responses_text_of(message.get("content"))
+    if text:
+        parts.append({"text": text})
+    raw_content = message.get("content")
+    if isinstance(raw_content, list):
+        for b in raw_content:
+            if isinstance(b, dict) and b.get("type") == "image_url":
+                url = (b.get("image_url") or {}).get("url", "")
+                data_url = _parse_data_url(url)
+                if data_url:
+                    parts.append({"inlineData": {"mimeType": data_url[0], "data": data_url[1]}})
+    for tc in message.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except (ValueError, TypeError):
+                args = {}
+        parts.append({"functionCall": {"name": fn.get("name", ""), "args": args or {}}})
+    if not parts:
+        parts = [{"text": ""}]
 
     gemini_finish = "STOP"
     if finish_reason == "length":
@@ -335,7 +722,7 @@ def openai_to_gemini_response(data: dict) -> dict:
 
     return {
         "candidates": [{
-            "content": {"parts": [{"text": content_text}], "role": "model"},
+            "content": {"parts": parts, "role": "model"},
             "finishReason": gemini_finish,
         }],
         "usageMetadata": {
@@ -346,8 +733,13 @@ def openai_to_gemini_response(data: dict) -> dict:
     }
 
 
-def convert_openai_stream_to_claude_chunks(openai_chunk: dict, msg_id: str) -> str | None:
-    "Convert an OpenAI SSE chunk to a Claude streaming event string."
+def convert_openai_stream_to_claude_chunks(openai_chunk: dict, msg_id: str,
+                                            state: dict | None = None) -> str | None:
+    """Convert an OpenAI SSE chunk to Claude streaming event string.
+
+    支持文本增量与工具调用增量。工具调用需要跨 chunk 累积（index -> block），
+    调用方需为每次请求传入同一个可变 dict 作为 state（None 时为无状态模式）。
+    """
     choices = openai_chunk.get("choices", [])
     if not choices:
         return None
@@ -356,6 +748,11 @@ def convert_openai_stream_to_claude_chunks(openai_chunk: dict, msg_id: str) -> s
     delta = choice.get("delta", {})
     finish = choice.get("finish_reason")
     content = delta.get("content", "")
+    state = state if state is not None else {}
+    tool_blocks = state.setdefault("_claude_tool_blocks", {})
+    next_index = state.setdefault("_claude_next_index", [0])
+
+    events: list[str] = []
 
     if content:
         event = {
@@ -363,17 +760,59 @@ def convert_openai_stream_to_claude_chunks(openai_chunk: dict, msg_id: str) -> s
             "index": 0,
             "delta": {"type": "text_delta", "text": content},
         }
-        return "event: content_block_delta\ndata: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+        events.append("event: content_block_delta\ndata: " + json.dumps(event, ensure_ascii=False) + "\n\n")
 
-    if finish == "stop":
+    # 工具调用增量：首次出现（带 id/name）发 content_block_start，arguments 发 input_json_delta
+    for tc in delta.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        idx = tc.get("index", 0)
+        fn = tc.get("function") or {}
+        block = tool_blocks.get(idx)
+        if block is None:
+            bidx = next_index[0]
+            next_index[0] += 1
+            block = {"block_index": bidx, "started": False}
+            tool_blocks[idx] = block
+        if not block["started"]:
+            start_event = {
+                "type": "content_block_start",
+                "index": block["block_index"],
+                "content_block": {
+                    "type": "tool_use",
+                    "id": tc.get("id") or _tool_call_id_fallback(),
+                    "name": fn.get("name", ""),
+                    "input": {},
+                },
+            }
+            events.append("event: content_block_start\ndata: " + json.dumps(start_event, ensure_ascii=False) + "\n\n")
+            block["started"] = True
+        arg = fn.get("arguments")
+        if arg:
+            delta_event = {
+                "type": "content_block_delta",
+                "index": block["block_index"],
+                "delta": {"type": "input_json_delta", "partial_json": arg},
+            }
+            events.append("event: content_block_delta\ndata: " + json.dumps(delta_event, ensure_ascii=False) + "\n\n")
+
+    if finish in ("stop", "tool_calls"):
+        for block in tool_blocks.values():
+            stop_event = {"type": "content_block_stop", "index": block["block_index"]}
+            events.append("event: content_block_stop\ndata: " + json.dumps(stop_event, ensure_ascii=False) + "\n\n")
         event = {"type": "message_stop"}
-        return "event: message_stop\ndata: " + json.dumps(event) + "\n\n"
+        events.append("event: message_stop\ndata: " + json.dumps(event) + "\n\n")
 
-    return None
+    return "".join(events) if events else None
 
 
-def convert_openai_stream_to_gemini_chunks(openai_chunk: dict) -> str | None:
-    "Convert an OpenAI SSE chunk to a Gemini streaming JSON line."
+def convert_openai_stream_to_gemini_chunks(openai_chunk: dict,
+                                            state: dict | None = None) -> str | None:
+    """Convert an OpenAI SSE chunk to Gemini streaming JSON line(s).
+
+    支持文本增量与工具调用。工具调用跨 chunk 累积，在 finish 时输出完整
+    functionCall parts（Gemini 流式协议以完整 functionCall 表达）。
+    """
     choices = openai_chunk.get("choices", [])
     if not choices:
         return None
@@ -382,18 +821,47 @@ def convert_openai_stream_to_gemini_chunks(openai_chunk: dict) -> str | None:
     delta = choice.get("delta", {})
     finish = choice.get("finish_reason")
     content = delta.get("content", "")
+    state = state if state is not None else {}
+    pending = state.setdefault("_gemini_tool_calls", {})
 
+    for tc in delta.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        idx = tc.get("index", 0)
+        acc = pending.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+        if tc.get("id"):
+            acc["id"] = tc["id"]
+        fn = tc.get("function") or {}
+        if fn.get("name"):
+            acc["name"] = fn["name"]
+        if fn.get("arguments"):
+            acc["arguments"] += fn["arguments"]
+
+    lines: list[str] = []
     if content:
-        return json.dumps({
+        lines.append(json.dumps({
             "candidates": [{"content": {"parts": [{"text": content}], "role": "model"}}],
-        }, ensure_ascii=False) + "\n"
+        }, ensure_ascii=False) + "\n")
 
-    if finish == "stop":
-        return json.dumps({
+    if finish in ("stop", "tool_calls") and pending:
+        parts = []
+        for acc in pending.values():
+            args = acc["arguments"] or "{}"
+            try:
+                args_obj = json.loads(args) if args else {}
+            except (ValueError, TypeError):
+                args_obj = {}
+            parts.append({"functionCall": {"name": acc["name"], "args": args_obj}})
+        lines.append(json.dumps({
+            "candidates": [{"content": {"parts": parts, "role": "model"}, "finishReason": "STOP"}],
+        }, ensure_ascii=False) + "\n")
+
+    if finish in ("stop", "tool_calls") and not pending:
+        lines.append(json.dumps({
             "candidates": [{"content": {"parts": [], "role": "model"}, "finishReason": "STOP"}],
-        }) + "\n"
+        }) + "\n")
 
-    return None
+    return "".join(lines) if lines else None
 # ============================================================
 # Image Generation Protocol Adapters
 # ============================================================
@@ -607,7 +1075,10 @@ def video_response_to_openai(data: dict, task_id: str = "") -> dict:
 # ============================================================
 
 def chat_to_responses_request(body: dict, model_id: str) -> dict:
-    """Convert an OpenAI chat/completions body into a Codex Responses API request."""
+    """Convert an OpenAI chat/completions body into a Codex Responses API request.
+
+    保留文本/图片（含 detail）/工具函数/联网搜索，以及历史工具调用与结果。
+    """
     instructions = ""
     input_items = []
     for msg in body.get("messages", []):
@@ -616,12 +1087,46 @@ def chat_to_responses_request(body: dict, model_id: str) -> dict:
         if role == "system":
             instructions += "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
             continue
+        if role == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, dict):
+                    args = json.dumps(args, ensure_ascii=False)
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id") or f"call_{uuid.uuid4().hex[:16]}",
+                    "name": fn.get("name", ""),
+                    "arguments": args or "",
+                })
+            continue
+        if role == "tool":
+            out = msg.get("content", "")
+            if not isinstance(out, str):
+                out = json.dumps(out, ensure_ascii=False)
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.get("tool_call_id") or "",
+                "output": out,
+            })
+            continue
         content_items = []
         for b in blocks:
             if b.get("type") == "text":
                 content_items.append({"type": "input_text", "text": b.get("text", "")})
             elif b.get("type") == "image_url":
-                content_items.append({"type": "input_image", "image_url": (b.get("image_url") or {}).get("url", "")})
+                img = b.get("image_url") or {}
+                url = img.get("url", "")
+                item = {"type": "input_image", "image_url": url}
+                if img.get("detail"):
+                    item["detail"] = img["detail"]
+                content_items.append(item)
+            elif b.get("type") == "input_audio":
+                audio = b.get("input_audio") or {}
+                content_items.append({"type": "input_audio", "data": audio.get("data", ""),
+                                      "format": audio.get("format", "wav")})
         if not content_items:
             continue
         input_items.append({"role": "assistant" if role == "assistant" else "user", "content": content_items})
@@ -637,24 +1142,60 @@ def chat_to_responses_request(body: dict, model_id: str) -> dict:
         req["temperature"] = body["temperature"]
     if "top_p" in body:
         req["top_p"] = body["top_p"]
+
+    # 工具：函数工具 + 内置联网搜索
+    tools = []
+    for fn in _iter_function_tools(body.get("tools")):
+        f = fn["function"]
+        tools.append({"type": "function", "name": f.get("name", ""),
+                      "description": f.get("description", ""),
+                      "parameters": f.get("parameters") or {"type": "object", "properties": {}}})
+    if _has_search_tool(body.get("tools")) or body.get("web_search_options") is not None:
+        tools.append({"type": "web_search"})
+    if tools:
+        req["tools"] = tools
+        if body.get("tool_choice") is not None:
+            req["tool_choice"] = body["tool_choice"]
     return req
 
 
 def responses_to_chat(data: dict, model_id: str) -> dict:
-    """Convert a Responses API result into an OpenAI chat.completion response."""
+    """Convert a Responses API result into an OpenAI chat.completion response.
+
+    保留文本与 function_call（工具调用）。
+    """
     text = ""
+    tool_calls = []
     for out in data.get("output", []):
-        if out.get("type") == "message":
+        otype = out.get("type")
+        if otype == "message":
             for c in out.get("content", []):
                 if c.get("type") == "output_text":
                     text += c.get("text", "")
+                elif c.get("type") == "output_image":
+                    url = c.get("image_url") or c.get("url")
+                    if url:
+                        text += f"![image]({url})"
+        elif otype == "function_call":
+            args = out.get("arguments")
+            if isinstance(args, dict):
+                args = json.dumps(args, ensure_ascii=False)
+            tool_calls.append({
+                "id": out.get("call_id") or f"call_{uuid.uuid4().hex[:16]}",
+                "type": "function",
+                "function": {"name": out.get("name", ""), "arguments": args or ""},
+            })
     usage = data.get("usage") or {}
+    message: dict = {"role": "assistant", "content": text}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
     return {
         "id": data.get("id") or f"chatcmpl-{uuid.uuid4().hex[:12]}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model_id,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": message,
+                     "finish_reason": "tool_calls" if tool_calls else "stop"}],
         "usage": {
             "prompt_tokens": usage.get("input_tokens", 0),
             "completion_tokens": usage.get("output_tokens", 0),
@@ -766,11 +1307,23 @@ def _responses_item_to_chat_messages(item) -> list[dict]:
     return [{"role": role or "user", "content": blocks}]
 
 
-def _responses_tools_to_chat(tools) -> list[dict]:
-    """Responses tools -> chat.completions tools（内置工具无对应实现，丢弃）。"""
-    out = []
+def _responses_tools_to_chat(tools) -> tuple[list[dict], list[dict]]:
+    """Responses tools -> (chat function tools, web_search tool markers).
+
+    函数工具直接转换；内置 web_search 工具以 chat 可识别的
+    ``{"type": "web_search"}`` 标记返回，供下游 openai_to_claude/gemini
+    转成对应形态，避免搜索能力丢失。
+    """
+    out: list[dict] = []
+    search: list[dict] = []
     for t in tools or []:
-        if not isinstance(t, dict) or t.get("type") != "function":
+        if not isinstance(t, dict):
+            continue
+        ttype = t.get("type")
+        if _is_search_tool(t):
+            search.append({"type": "web_search"})
+            continue
+        if ttype != "function":
             continue
         if "function" in t:
             out.append(t)
@@ -778,7 +1331,70 @@ def _responses_tools_to_chat(tools) -> list[dict]:
         fn = {k: v for k, v in t.items() if k != "type"}
         if fn.get("name"):
             out.append({"type": "function", "function": fn})
-    return out
+    return out, search
+
+
+def _responses_input_to_chat_messages(raw_input) -> list[dict]:
+    """Responses input item 列表 -> chat messages，保留工具调用历史结构。
+
+    - message item -> 常规 user/assistant（含图片等 content blocks）
+    - function_call item -> assistant 消息的 tool_calls（连续的合并）
+    - function_call_output item -> role=tool 消息
+    - reasoning item -> 丢弃（无状态模式无实质内容）
+    """
+    messages: list[dict] = []
+    pending_tool_calls: list[dict] = []
+
+    def flush():
+        if pending_tool_calls:
+            messages.append({"role": "assistant", "content": "", "tool_calls": list(pending_tool_calls)})
+            pending_tool_calls.clear()
+
+    for item in raw_input or []:
+        if isinstance(item, str):
+            if item:
+                flush()
+                messages.append({"role": "user", "content": item})
+            continue
+        if not isinstance(item, dict):
+            continue
+        itype = item.get("type")
+        if itype == "reasoning":
+            continue
+        if itype == "function_call":
+            args = item.get("arguments") or ""
+            if isinstance(args, (dict, list)):
+                args = json.dumps(args, ensure_ascii=False)
+            pending_tool_calls.append({
+                "id": item.get("call_id") or f"call_{uuid.uuid4().hex[:16]}",
+                "type": "function",
+                "function": {"name": item.get("name", ""), "arguments": args},
+            })
+            continue
+        if itype == "function_call_output":
+            flush()
+            out = item.get("output", "")
+            if not isinstance(out, str):
+                out = json.dumps(out, ensure_ascii=False)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": item.get("call_id") or "",
+                "content": out,
+            })
+            continue
+        # 普通 message：先冲刷挂起的 tool_calls
+        flush()
+        role = item.get("role")
+        content = item.get("content")
+        if isinstance(content, str):
+            if content:
+                messages.append({"role": role or "user", "content": content})
+        else:
+            blocks = _responses_content_to_openai(content)
+            if blocks:
+                messages.append({"role": role or "user", "content": blocks})
+    flush()
+    return messages
 
 
 def responses_request_to_chat(body: dict) -> dict:
@@ -800,8 +1416,7 @@ def responses_request_to_chat(body: dict) -> dict:
         if raw_input:
             messages.append({"role": "user", "content": raw_input})
     else:
-        for item in raw_input or []:
-            messages.extend(_responses_item_to_chat_messages(item))
+        messages.extend(_responses_input_to_chat_messages(raw_input))
 
     chat["messages"] = messages
 
@@ -813,9 +1428,11 @@ def responses_request_to_chat(body: dict) -> dict:
         if body.get(key) is not None:
             chat[key] = body[key]
 
-    tools = _responses_tools_to_chat(body.get("tools"))
+    tools, search_tools = _responses_tools_to_chat(body.get("tools"))
     if tools:
         chat["tools"] = tools
+    if search_tools:
+        chat["web_search_options"] = {}
     tool_choice = body.get("tool_choice")
     if tools and tool_choice is not None:
         chat["tool_choice"] = tool_choice
@@ -974,6 +1591,8 @@ class ResponsesStreamWriter:
         self.finish_reason: str | None = None
         self.usage: dict | None = None
         self.error_payload: dict | None = None
+        self.tool_calls: dict[int, dict] = {}  # index -> {id,name,arguments}
+        self.tool_call_emitted: set[int] = set()
 
     # -- internals ---------------------------------------------------------
     def _event(self, event_type: str, payload: dict) -> tuple[str, dict]:
@@ -1042,6 +1661,20 @@ class ResponsesStreamWriter:
                 "delta": text_delta,
             }))
 
+        # 工具调用增量：跨 chunk 累积（index -> id/name/arguments）
+        for tc in delta.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            idx = tc.get("index", 0)
+            acc = self.tool_calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+            if tc.get("id"):
+                acc["id"] = tc["id"]
+            fn = tc.get("function") or {}
+            if fn.get("name"):
+                acc["name"] = fn["name"]
+            if fn.get("arguments"):
+                acc["arguments"] += fn["arguments"]
+
         return events
 
     def _envelope(self, status: str, output: list[dict] | None = None,
@@ -1067,9 +1700,29 @@ class ResponsesStreamWriter:
             return "failed", None
         return status, ({"reason": incomplete_reason} if incomplete_reason else None)
 
+    def _function_call_items(self) -> list[dict]:
+        items = []
+        for idx in sorted(self.tool_calls):
+            acc = self.tool_calls[idx]
+            if not acc.get("name"):
+                continue
+            items.append({
+                "id": f"fc_{idx}_{uuid.uuid4().hex[:12]}",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": acc.get("id") or f"call_{uuid.uuid4().hex[:16]}",
+                "name": acc["name"],
+                "arguments": acc.get("arguments") or "",
+            })
+        return items
+
     def _final_response(self) -> dict:
         status, incomplete_details = self._final_status()
-        return self._envelope(status, [self._item("completed")] if self.text else [], incomplete_details)
+        output: list[dict] = []
+        if self.text:
+            output.append(self._item("completed"))
+        output.extend(self._function_call_items())
+        return self._envelope(status, output, incomplete_details)
 
     def finish(self) -> list[tuple[str, dict]]:
         if self.finished:
@@ -1095,6 +1748,24 @@ class ResponsesStreamWriter:
             "output_index": 0,
             "item": self._item("completed"),
         }))
+        # 工具调用：作为额外的 function_call output item 下发
+        output_index = 1
+        for fc in self._function_call_items():
+            events.append(self._event("response.output_item.added", {
+                "output_index": output_index,
+                "item": fc,
+            }))
+            events.append(self._event("response.function_call_arguments.done", {
+                "item_id": fc["id"],
+                "output_index": output_index,
+                "name": fc["name"],
+                "arguments": fc["arguments"],
+            }))
+            events.append(self._event("response.output_item.done", {
+                "output_index": output_index,
+                "item": fc,
+            }))
+            output_index += 1
         events.append(self._event("response.completed", {"response": self._final_response()}))
         return events
 
@@ -1174,17 +1845,28 @@ def _claude_content_to_openai(content) -> list[dict]:
     return blocks
 
 
-def _claude_tools_to_chat(tools) -> list[dict]:
+def _claude_tools_to_chat(tools) -> tuple[list[dict], bool]:
+    """Claude tools -> (chat function tools, has_search).
+
+    函数工具正常转换；内置 web_search_* 工具以 has_search 标记透传。
+    """
     out = []
+    has_search = False
     for t in tools or []:
-        if not isinstance(t, dict) or not t.get("name"):
+        if not isinstance(t, dict):
+            continue
+        ttype = t.get("type", "")
+        if _is_search_tool(t):
+            has_search = True
+            continue
+        if not t.get("name"):
             continue
         out.append({"type": "function", "function": {
             "name": t.get("name", ""),
             "description": t.get("description", ""),
             "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
         }})
-    return out
+    return out, has_search
 
 
 def _claude_tool_choice_to_chat(tool_choice):
@@ -1236,9 +1918,11 @@ def claude_request_to_chat(body: dict) -> dict:
     if body.get("stream"):
         chat["stream"] = True
 
-    tools = _claude_tools_to_chat(body.get("tools"))
+    tools, has_search = _claude_tools_to_chat(body.get("tools"))
     if tools:
         chat["tools"] = tools
+    if has_search:
+        chat["web_search_options"] = {}
     if body.get("tool_choice") is not None:
         chat["tool_choice"] = _claude_tool_choice_to_chat(body.get("tool_choice"))
     return chat
@@ -1270,11 +1954,18 @@ def _gemini_parts_to_openai(parts) -> list[dict]:
     return blocks
 
 
-def _gemini_tools_to_chat(tools) -> list[dict]:
+def _gemini_tools_to_chat(tools) -> tuple[list[dict], bool]:
+    """Gemini tools -> (chat function tools, has_search).
+
+    函数声明正常转换；google_search 内置工具以 has_search 标记透传。
+    """
     out = []
+    has_search = False
     for t in tools or []:
         if not isinstance(t, dict):
             continue
+        if _is_search_tool(t):
+            has_search = True
         for fd in t.get("functionDeclarations") or t.get("function_declarations") or []:
             if not fd.get("name"):
                 continue
@@ -1283,7 +1974,7 @@ def _gemini_tools_to_chat(tools) -> list[dict]:
                 "description": fd.get("description", ""),
                 "parameters": fd.get("parameters") or {"type": "object", "properties": {}},
             }})
-    return out
+    return out, has_search
 
 
 def gemini_request_to_chat(body: dict, model: str) -> dict:
@@ -1316,9 +2007,11 @@ def gemini_request_to_chat(body: dict, model: str) -> dict:
         if gen.get(src) is not None:
             chat[dst] = gen[src]
 
-    tools = _gemini_tools_to_chat(body.get("tools"))
+    tools, has_search = _gemini_tools_to_chat(body.get("tools"))
     if tools:
         chat["tools"] = tools
+    if has_search:
+        chat["web_search_options"] = {}
     tool_config = body.get("toolConfig") or body.get("tool_config") or {}
     fcc = tool_config.get("functionCallingConfig") or tool_config.get("function_calling_config") or {}
     mode = fcc.get("mode")
