@@ -18,7 +18,24 @@ _static_cache: dict[str, tuple[float, object]] = {}
 
 def _load_static_json(filename: str) -> object:
     import time as _time
-    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", filename)
+
+    # 候选路径（按优先级）：
+    #  1. exe 旁的 data/（frozen 时可编辑，用户可自行替换模板）— DATA_DIR
+    #  2. 内置 sys._MEIPASS/data/（PyInstaller 打包时的只读副本）
+    #  3. 源码 backend/data/（开发模式）
+    candidates: list[str] = []
+    try:
+        from app.config import DATA_DIR
+        candidates.append(os.path.join(str(DATA_DIR), filename))
+    except Exception:
+        pass
+    candidates.append(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", filename)
+    )
+
+    json_path = next((p for p in candidates if os.path.isfile(p)), None)
+    if json_path is None:
+        return []
     try:
         mtime = os.stat(json_path).st_mtime
     except OSError:
@@ -47,14 +64,6 @@ async def create_provider(data: ProviderCreate, db: AsyncSession = Depends(get_d
     db.add(provider)
     await db.commit()
     await db.refresh(provider)
-    return provider
-
-
-@router.get("/{provider_id}", response_model=ProviderOut)
-async def get_provider(provider_id: int, db: AsyncSession = Depends(get_db)):
-    provider = await db.get(Provider, provider_id)
-    if not provider:
-        raise HTTPException(404, "Provider not found")
     return provider
 
 
@@ -146,3 +155,14 @@ async def get_provider_details(provider_id: str):
 @router.get("/hot-providers")
 async def get_hot_providers():
     return _load_static_json("hot_providers.json")
+
+
+# NOTE: this dynamic route MUST stay last. FastAPI matches in registration
+# order, so /supported and /hot-providers (registered above) would otherwise be
+# captured as a non-int {provider_id} and return 422.
+@router.get("/{provider_id}", response_model=ProviderOut)
+async def get_provider(provider_id: int, db: AsyncSession = Depends(get_db)):
+    provider = await db.get(Provider, provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    return provider

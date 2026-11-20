@@ -145,6 +145,9 @@ Copy-Item (Join-Path $repo "dist\LocalRouter.exe") $stage
 Copy-Item (Join-Path $repo "release\run.bat") $stage
 New-Item -ItemType Directory -Path (Join-Path $stage "frontend") | Out-Null
 Copy-Item -Recurse (Join-Path $repo "frontend\dist") (Join-Path $stage "frontend\dist")
+# 静态模板 JSON（热门平台列表）放到 exe 旁 data/，用户可直接编辑更新列表。
+New-Item -ItemType Directory -Path (Join-Path $stage "data") | Out-Null
+Copy-Item (Join-Path $repo "backend\data\hot_providers.json") (Join-Path $stage "data\hot_providers.json")
 if (Test-Path (Join-Path $repo ".env.example")) {
     Copy-Item (Join-Path $repo ".env.example") $stage
 }

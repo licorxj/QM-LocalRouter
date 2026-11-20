@@ -70,6 +70,9 @@ _common = dict(
     # alembic schema migrations: env.py reads these from sys._MEIPASS in
     # onefile builds (see database._alembic_assets_dir).
     + [("backend/alembic", "alembic"), ("backend/alembic.ini", ".")]
+    # 静态模板 JSON：热门平台列表等。providers._load_static_json 在 frozen
+    # 模式下从 sys._MEIPASS/data 读取，不打包会导致「热门平台」弹窗为空。
+    + [("backend/data/hot_providers.json", "data")]
     + ([("version.json", ".")] if os.path.exists("version.json") else []),
     hiddenimports=[
         "app",

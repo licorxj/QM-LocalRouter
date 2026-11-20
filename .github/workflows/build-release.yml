@@ -101,6 +101,10 @@ jobs:
             mkdir -p "$STAGE/frontend"
             cp -r frontend/dist "$STAGE/frontend/dist"
           fi
+          # 静态模板 JSON（热门平台列表）：exe 旁 data/ 可编辑，内置 _MEIPASS
+          # 也有一份打包副本用于回退，避免「热门平台」弹窗为空。
+          mkdir -p "$STAGE/data"
+          cp backend/data/hot_providers.json "$STAGE/data/hot_providers.json"
           [ -f .env.example ] && cp .env.example "$STAGE/.env.example"
           ( cd "$STAGE" && zip -r "../$ASSET.zip" . )
         shell: bash

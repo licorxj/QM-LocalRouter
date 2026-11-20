@@ -74,6 +74,7 @@ Source: "{#StageDir}\LocalRouter.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\apirouter.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\run.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\frontend\dist\*"; DestDir: "{app}\frontend\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\data\hot_providers.json"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#StageDir}\.env.example"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 #ifdef SetupIconFile
 Source: "{#SetupIconFile}"; DestDir: "{app}"; DestName: "app.ico"; Flags: ignoreversion
