@@ -118,3 +118,6 @@ backend/data/plugins/staging/
 
 # === 运行时网关配置（含密钥，不入库） ===
 /config.json
+
+# === 截图原始素材（用户本地源图；发布用副本在 docs/images/） ===
+/截图/

@@ -37,13 +37,13 @@
 
 | 资产 | 用途场景 |
 |---|---|
-| `dashboard.png` / `dashboard-light.png` | 开场产品亮相 / 双主题一闪 |
-| `free-models.png` | 场景 C 免费模型聚合 |
-| `providers.png` / `providers-light.png` | 场景 C 补充（$0 模型列表） |
-| `cli-import.png` / `cli-detect.png` | 场景 D CLI 反代 |
-| `chat.png` | 场景 D 收尾（CLI 免费模型真实对话） |
-| `sync-models.png` | 场景 C（74 个模型批量导入） |
-| `strategies.png` / `logs.png` / `endpoints.png` | 场景 E 智能路由 / 可观测性 |
+| `平台页.png` / `账号页.png` | 开场产品亮相 / 账号与额度一览 |
+| `平台页.png` | 场景 C 免费模型聚合（$0 模型列表） |
+| `账号页.png` | 场景 C 补充（账号接入与额度） |
+| `账号页.png` | 场景 D CLI 反代（本地 CLI 凭据账号） |
+| `组合路由页.png` | 场景 D 收尾（组合路由分发） |
+| `平台页.png` | 场景 C（模型批量导入） |
+| `组合路由页.png` / `可视化日志页.png` | 场景 E 智能路由 / 可观测性 |
 
 **建议补录 2 段屏幕录像**（增强真实感，非必需）：
 1. 浏览器里点「免费模型合集 → 加入」的完整操作（10s，1440p）
@@ -55,12 +55,12 @@
 | # | 时间 | 画面 | 动效 | 屏幕字幕（大字） | 旁白 |
 |---|---|---|---|---|---|
 | S1 钩子 | 0-6s | 黑底，6 个平台图标碎片飞入又散开，中央出现乱麻线条 | 图标 stagger 飞入→抖动散开，线条 stroke-dash 画出 | 65+ 个 AI 平台<br>65+ 套 Key<br>1 个你 | 每家大模型平台一套 SDK、一套 Key、一套故障处理…… |
-| S2 亮相 | 6-14s | Logo 从光点聚合（复用图标动效），随后 `dashboard.png` Ken-Burns 推近 | 光点汇聚→Logo scale-in→截图淡入上移 | LocalRouter<br>你的本地 API 路由管家 | LocalRouter——一个端点，接管所有大模型 API。 |
-| C1 免费聚合 | 14-30s | `free-models.png` 推近到渠道卡片；右侧代码动画：`+23 models · $0` 计数器滚动；`sync-models.png` 一闪 | 卡片高亮框沿「加入」按钮移动；计数器 CountUp；橙/青粒子 | 免费模型聚合<br>20+ 个 $0 模型 · 一键加入 | 先别花钱——公开免费网关渠道，一键聚合 20 多个 $0 模型，和付费 Key 混在同一个策略池里。 |
-| C2 CLI 反代 | 30-48s | 左：`cli-import.png` + `cli-detect.png` 左右交替；右：终端逐字打出 curl 命令→流式 JSON 响应滚动 | TerminalTyper 逐字 + 光标闪烁；响应 JSON 滚动高亮 | 本地 CLI 反代<br>CLI 免费额度 → OpenAI API | 更狠的是：本地 CLI 工具的免费额度，也能被反代成标准 OpenAI 接口。OpenCode、Cline、ZCode……导入凭据自动续期，你的任何 SDK 直接调用。 |
+| S2 亮相 | 6-14s | Logo 从光点聚合（复用图标动效），随后 `平台页.png` Ken-Burns 推近 | 光点汇聚→Logo scale-in→截图淡入上移 | LocalRouter<br>你的本地 API 路由管家 | LocalRouter——一个端点，接管所有大模型 API。 |
+| C1 免费聚合 | 14-30s | `平台页.png` 推近到渠道卡片；右侧代码动画：`+23 models · $0` 计数器滚动；`平台页.png` 一闪 | 卡片高亮框沿「加入」按钮移动；计数器 CountUp；橙/青粒子 | 免费模型聚合<br>20+ 个 $0 模型 · 一键加入 | 先别花钱——公开免费网关渠道，一键聚合 20 多个 $0 模型，和付费 Key 混在同一个策略池里。 |
+| C2 CLI 反代 | 30-48s | 左：`账号页.png` + `账号页.png` 左右交替；右：终端逐字打出 curl 命令→流式 JSON 响应滚动 | TerminalTyper 逐字 + 光标闪烁；响应 JSON 滚动高亮 | 本地 CLI 反代<br>CLI 免费额度 → OpenAI API | 更狠的是：本地 CLI 工具的免费额度，也能被反代成标准 OpenAI 接口。OpenCode、Cline、ZCode……导入凭据自动续期，你的任何 SDK 直接调用。 |
 | C3 智能路由 | 48-64s | **纯代码动画（全片高光）**：客户端→路由节点→三条上游光路，中间橙色主路亮起；故障时红光闪→0.3s 内切换备用路 | RequestDot 沿 path 循环流动（`useCurrentFrame` 插值），故障转移红色脉冲 | 5 种负载均衡策略<br>故障自动转移 · <1ms | 五种负载均衡策略，请求按权重轮询分发；某条上游挂了，0.3 秒内自动切到备用——客户端毫无感知。 |
-| C4 统一端点 | 64-74s | `endpoints.png` 顶部一角；三个协议徽章 OpenAI/Claude/Gemini 变形互换 | 徽章 morph：同一路径颜色切换 | OpenAI / Claude / Gemini<br>协议自动互转 | OpenAI、Claude、Gemini 协议自动互转——任何 SDK，调任何模型。 |
-| C5 本地&LAN | 74-82s | `dashboard-light.png` 一闪（双主题）；局域网拓扑小动画（3 设备→中心节点） | 主题切换闪切；拓扑连线依次点亮 | 纯本地运行 · Key 加密存储<br>局域网共享一个接入点 | 纯本地运行，Key 加密存储；开一个局域网开关，全家设备共享同一个接入点。 |
+| C4 统一端点 | 64-74s | `组合路由页.png` 顶部一角；三个协议徽章 OpenAI/Claude/Gemini 变形互换 | 徽章 morph：同一路径颜色切换 | OpenAI / Claude / Gemini<br>协议自动互转 | OpenAI、Claude、Gemini 协议自动互转——任何 SDK，调任何模型。 |
+| C5 本地&LAN | 74-82s | `账号页.png` 一闪（双主题）；局域网拓扑小动画（3 设备→中心节点） | 主题切换闪切；拓扑连线依次点亮 | 纯本地运行 · Key 加密存储<br>局域网共享一个接入点 | 纯本地运行，Key 加密存储；开一个局域网开关，全家设备共享同一个接入点。 |
 | S3 CTA | 82-90s | Logo + 仓库名大字 + Star 图标弹跳；底部字幕条 | scale-in + glow 脉冲 | 开源 MIT<br>github.com/licorxj/QM-LocalRouter | 开源免费，MIT 协议。地址在简介，先 Star 再白嫖。 |
 
 **竖版 45s 裁剪**：S1(4s) → S2(6s) → C1(10s) → C2(14s) → C3 压缩(6s) → CTA(5s)。

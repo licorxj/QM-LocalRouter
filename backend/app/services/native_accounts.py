@@ -103,9 +103,12 @@ def _machine_fingerprint() -> str:
     if os.name == "nt":
         try:
             import subprocess
+            _kw = ({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+                   if os.name == "nt" else {})
             out = subprocess.run(
                 ["reg", "query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"],
                 capture_output=True, text=True, timeout=10, check=False,
+                **_kw,
             ).stdout
             for line in out.splitlines():
                 if "MachineGuid" in line:

@@ -115,8 +115,8 @@ def main() -> int:
 
         print("[desktop] opening webview window", flush=True)
         webview.create_window(
-            # 初始宽度加宽 50%（1280 -> 1920）；高度与最小尺寸保持不变。
-            "LocalRouter", url, width=1920, height=820, min_size=(960, 640)
+            # 初始化窗口按 1920x1080 打开；最小尺寸保持不变。
+            "LocalRouter", url, width=1920, height=1080, min_size=(960, 640)
         )
         webview.start()
     except Exception as exc:  # e.g. WebView2 runtime missing on Windows

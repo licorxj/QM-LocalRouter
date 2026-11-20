@@ -266,9 +266,15 @@ async def _download(asset: dict[str, Any]) -> Path:
     return target
 
 
-def _spawn_detached(args: list[str], cwd: Path | None = None) -> None:
+def _spawn_detached(args: list[str], cwd: Path | None = None,
+                    no_window: bool = False) -> None:
     if _is_windows():
-        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        if no_window:
+            # .bat / 控制台辅助脚本：隐藏窗口，避免运行时闪出黑色 cmd 窗口
+            flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        else:
+            # GUI 安装器保留界面（Inno Setup 需要显示进度），但仍脱离当前控制台
+            flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
         subprocess.Popen(args, cwd=str(cwd) if cwd else None,
                          creationflags=flags, close_fds=True)
     else:
@@ -380,7 +386,7 @@ def _apply_portable_zip(zip_path: Path) -> dict[str, Any]:
     pid = os.getpid()
     bat, sh = _write_portable_helpers(app_dir, pending, pid)
     helper = bat if _is_windows() else sh
-    _spawn_detached([str(helper)], cwd=app_dir)
+    _spawn_detached([str(helper)], cwd=app_dir, no_window=True)
     _state.phase = "exiting"
     _state.message = "应用即将退出并自动完成换装重启"
     _exit_soon(delay=2.0)

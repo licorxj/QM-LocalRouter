@@ -4,7 +4,7 @@
   <img src="frontend/public/logo.png" alt="LocalRouter" width="96">
 </p>
 
-> **你的本地 API 路由管家** | Your Local LLM API Routing Manager
+> **你的本地 API 路由管家** — 一个端点，接管所有大模型 API。
 
 > [English](README.md) | **中文**
 
@@ -15,347 +15,105 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="LocalRouter 仪表盘 — 暗夜路由主题" width="860">
+  <img src="docs/images/平台页.png" alt="LocalRouter 平台接入页" width="900">
 </p>
 
 ---
 
-## 两大招牌能力
+## 它解决什么问题
 
-### 🆓 免费模型聚合 — 不花一分钱，先跑起来
+管理多个大模型平台很麻烦：每家有不同的 API 格式、计费方式和限流规则，你要维护多套 Key、多个 SDK，还要自己处理故障切换。
 
-「免费模型合集」持续追踪**公开免费网关渠道**（OpenCode Zen 免费车道、Kilo 免费池等），
-一键「加入」即自动创建平台、拉取全部免费模型（当前 **20+ 个 $0 模型**），无需注册、无需 API Key：
+**LocalRouter 用一个 OpenAI 兼容端点解决这一切**——把 65+ 平台、多账号、多 Key、多模型统一收进本地网关，对外只暴露一个 `http://localhost:12002/v1`。任何 OpenAI SDK 客户端改个 `base_url` 就能用。
 
-<p align="center">
-  <img src="docs/images/free-models.png" alt="免费模型合集 — 一键加入免费渠道" width="680">
-</p>
-
-- **零门槛**：匿名免费渠道，点一下「加入」就进平台列表，自动建好 Key 与模型
-- **纳入统一路由**：免费渠道与你的付费 Key 混在同一套策略/负载均衡/监控体系里，可以当备用层、降级层或直接白嫖
-- **需要本地网关的渠道自动引导**：如 OpenCode Zen 需经本地网关接入，弹窗自动预填网关地址，也可自动读取根目录 `config.json`
-- **云端同步**：渠道列表由云端维护并标注缓存时间，一键刷新
-
-### 🧩 本地 CLI 反代 — 把 CLI 的免费额度变成 OpenAI API
-
-除标准 API Key 外，LocalRouter 内置**本地 CLI 凭据导入向导**：自动检测/粘贴/浏览器授权
-导入凭据并**自动续期**，把 CLI 的**私有协议翻译成标准 OpenAI 格式**对外提供——
-你的任何 OpenAI SDK 客户端都能直接调用这些 CLI 背后的模型：
-
-<p align="center">
-  <img src="docs/images/cli-import.png" alt="导入本地 CLI 凭据" width="620">
-</p>
-
-- 导入向导覆盖 **OpenCode / Cline / ZCode / WorkBuddy / Amazon Q / Antigravity / Trae** 等
-- **OpenCode**：本机 `opencode serve` 运行时中转，SSE 事件流增量收集，私有 session/message 协议全适配
-- **Cline**：浏览器授权 + 凭据自动续期，按官方客户端指纹伪装直连云端
-- 详见下文 [本地 CLI 平台反代](#本地-cli-平台反代) 的实现细节与实测结论
+- **纯本地运行**：配置与数据全部存在本机，Key 用 Fernet 加密存储，不经过公网中转
+- **局域网共享**：一个接入点，全家设备 / 整个团队共用一份订阅
+- **开源 MIT**：Windows / macOS / Linux 桌面安装包齐全，也可 Docker / 源码部署
 
 ---
-
-## 核心亮点
-
-- **⚡ 本地一站式管理** — 集中管理所有上游 AI 平台（OpenAI、Anthropic、Google Gemini、DeepSeek 等 65+ 平台），所有配置和数据存储本地，无需公网暴露
-- **🔄 多策略智能路由** — 5 种负载均衡策略（轮询、加权、随机、故障转移、优先级）+ 自动故障切换
-- **🔑 多 Key 负载均衡** — 每个平台可配置多个 API Key，支持 RPM 阈值和计数阈值自动切换
-- **🤖 多 Model 自动调度** — 根据策略规则自动选择最优模型，支持模型级别自动降级
-- **🛡️ 协议自动转换** — OpenAI / Claude / Gemini 三种协议自动互转，任意 SDK 调用任意模型
-- **🎨 暗夜路由 UI** — 深海军蓝 + 橙色主题的全新界面，深浅双主题、中英双语、响应式布局
 
 ## 界面一览
 
-| 平台管理（Key / 模型 / $0 免费模型） | AI 对话 |
+| 账号接入（多账号额度一目了然） | 平台接入（平台 / Key / 模型一站式） |
 |:---:|:---:|
-| ![平台管理](docs/images/providers.png) | ![AI 对话](docs/images/chat.png) |
-| **路由策略** | **同步平台模型（74 个模型批量导入）** |
-| ![路由策略](docs/images/strategies.png) | ![同步平台模型](docs/images/sync-models.png) |
-| **请求日志** | **浅色主题** |
-| ![请求日志](docs/images/logs.png) | ![浅色主题](docs/images/dashboard-light.png) |
+| ![账号接入](docs/images/账号页.png) | ![平台接入](docs/images/平台页.png) |
+| **组合路由（多策略智能分发）** | **脚本插件（可扩展能力）** |
+| ![组合路由](docs/images/组合路由页.png) | ![脚本插件](docs/images/插件页.png) |
+| **可视化日志（调用链追踪）** | |
+| ![可视化日志](docs/images/可视化日志页.png) | |
 
 ---
 
-## 为什么选择 LocalRouter？
+## 核心能力
 
-管理多个 LLM 平台非常痛苦。每个平台都有不同的 API 格式、计费方式和速率限制。你需要维护多套 API Key、多个 SDK、手动处理故障转移。
+### 👤 账号接入
+统一纳管各平台的第三方账号（WorkBuddy、CodeBuddy、ZCode、Claude Code、ChatGPT/Codex、Cline、Antigravity、GitHub Copilot、Amazon Q、OpenCode 等），**实时展示剩余额度 / 积分**，支持一键刷新与网络检测。账号凭据自动续期，无需反复登录。
 
-**LocalRouter 通过一个统一的 OpenAI 兼容端点解决了这些问题：**
-
-| 问题 | 解决方案 |
-|------|----------|
-| 多个平台 SDK 不统一 | 单一 OpenAI 兼容 API |
-| API Key 管理混乱 | 集中密钥管理 + 加密存储 |
-| 平台故障 | 自动故障转移到备用平台/Key |
-| 速率限制 | 多 Key 轮换 + RPM 智能切换 |
-| 协议不兼容 | 自动转换 OpenAI/Claude/Gemini 格式 |
-| 模型发现困难 | 一键从上游同步 + 免费模型聚合 + 内置 100+ 已知模型库 |
-| 预算有限 | 🆓 免费渠道一键聚合，先跑通再付费 |
-
----
-
-## 局域网统一管理优势
-
-LocalRouter 从设计之初就为**局域网（LAN）部署**而优化。开启局域网访问后，网内所有设备共享一个接入点：
-
-| 优势 | 说明 |
-|------|------|
-| **成本共享** | 一份 API Key 订阅服务整个团队，无需为每台设备单独购买 |
-| **集中密钥管理** | 一处添加/轮换 API Key，所有局域网设备自动生效 |
-| **统一策略管控** | 路由规则一次定义，团队成员共享相同的智能路由策略 |
-| **零延迟开销** | 局域网转发延迟 <1ms，无需经过云端中转 |
-| **数据隐私** | 所有 API 请求在局域网内完成，不经过外部网关 |
-| **跨平台支持** | Windows、macOS、Linux、iOS、Android -- 任何支持 HTTP 的设备都能用 |
-| **即插即用** | 兼容所有 OpenAI SDK 客户端 -- Cursor、ChatBox、CherryStudio、Open WebUI |
-
-**典型使用场景：**
-- 团队工作站共享一套 API Key，统一管理
-- 移动设备无需安装 SDK，直接调用 LLM API
-- IoT 设备通过局域网端点集成 AI 能力
-- CI/CD 流水线使用与开发环境相同的路由策略
-
----
-
-## 功能特性
-
-### 平台管理
+### 🔌 平台接入
 - 结构化管理上游平台（名称、协议、地址、图标），图标一键搜索
-- 65+ 热门平台模板一键快速添加；在线平台目录一键导入
-- 启用/禁用单个平台
+- 65+ 热门平台模板一键添加，**在线平台目录**按需导入
+- 每个平台下集中管理 Key 与模型：密钥健康检测、批量测试、多 Key 调用策略（轮询 / 随机 / 故障转移 / RPM 阈值 / 计数阈值）
 
-### API Key 管理
-- 按平台分组管理 API Key，支持别名、权重、批量导入
-- 密钥健康检测（有效/无效/未测试），批量测试、批量删除无效 Key
-- **多 Key 调用策略**：轮询 / 随机 / 故障转移 / RPM 阈值 / 计数阈值
-- **加密存储** -- Fernet 对称加密，密钥文件自动生成
+### 🧭 组合路由
+- 5 种负载均衡策略：**轮询、加权、随机、故障转移、优先级**
+- 多条规则按优先级组合成策略，按模型名解析并分发
+- 上游故障时**自动切换**备用线路，本地转发延迟 <1ms，客户端无感知
 
-### 模型管理
-- 每个平台独立的模型管理（类型/多模态/上下文/价格）
-- **一键从上游同步** -- 智能参数检测，支持全选/反选/批量添加
-- **内置已知模型数据库** -- 100+ 预配置模型参数
-- 模型连通性测试、批量测试、自动降级
+### 🧩 脚本插件
+- 插件从在线目录**按需下载**，不随安装包分发，保持本体轻量
+- 服务型插件（如 opencode2api 网关）启用后自动在后台拉起，提供兼容接口
+- 内置**定时任务**（cron / interval / once），可自动执行签到等重复作业，并留有执行日志
 
-### 路由策略
+### 📊 可视化日志
+- 仪表盘：请求量、成功率、延迟、Token 用量，实时刷新
+- 可视化日志：完整请求历史 + 调用链追踪，按平台 / 策略 / 状态筛选
 
-| 策略 | 说明 |
-|------|------|
-| **轮询 (Round Robin)** | 按顺序依次轮换规则 |
-| **加权 (Weighted)** | 按权重比例分配流量 |
-| **随机 (Random)** | 随机选择规则 |
-| **故障转移 (Failover)** | 按优先级，失败时自动切换 |
-| **优先级 (Priority)** | 始终使用最高优先级 |
-
-### 协议支持
-- **OpenAI** -- 原生兼容（GPT 系列、o1/o3、DALL-E、TTS、Whisper）
-- **Anthropic Claude** -- 自动格式转换
-- **Google Gemini** -- 自动格式转换
-- **自定义** -- 任何 OpenAI 兼容端点
-
-### 可观测性
-- **仪表盘** -- 今日请求量、成功率、延迟、Token 用量，实时刷新
-- **请求日志** -- 完整请求历史，按策略/平台筛选，错误详情与复制
-- **策略测试** -- 上线前测试路由链路
-
-### 系统设置
-- **深色/浅色/跟随系统** 三态主题（默认深色）
-- **中英文双语界面**
-- 备份与恢复（手动/定时/上传恢复）、GitHub 一键更新
-
----
-
-## 本地 CLI 平台反代
-
-除标准 API Key 外，LocalRouter 支持导入**本地 / 第三方 CLI 工具的凭据**并自动续期，
-把它们的私有协议翻译成 OpenAI 兼容格式。目前已完成转发适配的是 **OpenCode** 与 **Cline**。
-
-| 平台 | 连接方式 | 需要本地进程 |
-|------|----------|--------------|
-| **OpenCode** | 中转 —— 转发到本机 `opencode serve` | **需要** |
-| **Cline** | 直连 —— 转发到 `https://api.cline.bot/api/v1` | 不需要 |
-
-> 两者的"CLI"含义不同：OpenCode 真的调用了本机 CLI 的运行时；Cline 只是**凭据来自
-> Cline 账号**，请求直连其云端，不依赖任何本地进程。
-
-### OpenCode（本地运行时中转）
-
-1. 安装 CLI：`npm install -g opencode-ai`
-2. 启动服务端：
-   ```bash
-   opencode serve --port 4096 --hostname 127.0.0.1
-   ```
-   > 端口说明：示例统一使用 **4096**。OpenCode 官方常用端口 10001 常被小米电脑管家等
-   > 软件占用，会导致连接失败。
-3. 进入 **平台管理 → 本地CLI**，选择 **OpenCode**，可点击「检测本机凭据」自动导入，
-   或手动填写服务器地址与服务端密码（服务端未启用鉴权时密码留空）
-4. 点「测试」验证连通，再点「同步平台模型」拉取免费模型
-
-实现要点：
-
-- 对话走 OpenCode 私有的 **session / message** 协议（并非 OpenAI 端点）
-- 输出走 **SSE 事件流** `GET /global/event` 实时收集增量（非轮询）；服务端不支持时
-  自动降级为轮询，不影响可用性
-- 事件报文为嵌套结构 `{payload:{type,properties}}`，需解包后使用；其中
-  `type=="sync"` 是同一事件的重复推送，已去重
-
-### Cline（直连云端 + 客户端伪装）
-
-1. 进入 **本地CLI** 导入向导，选择 **Cline**，点「打开浏览器授权」完成登录，凭据会
-   自动保存并自动续期
-2. 点「同步平台模型」拉取免费模型（如 `cline-free/deepseek-v4.1-flash`）
-
-实现要点（Cline 不是标准 OpenAI 端点，必须按官方插件的私有协议通信）：
-
-- 端点 `https://api.cline.bot/api/v1/chat/completions`，鉴权为 `Bearer workos:<accessToken>`
-- 必须携带 Cline 客户端指纹头（`User-Agent: Cline/3.0.47`、`X-CLIENT-TYPE: cline-sdk`、
-  `X-PLATFORM: terminal` 等），否则免费模型返回
-  `403 only available via Cline product surfaces`
-- 请求体携带 `max_tokens` 会让免费模型直接 500，已自动剥离
-- 免费通道的非流式请求会被限流，已强制上游走流式再聚合返回
-
-### 工具调用（function calling）
-
-| 平台 | 支持情况 |
-|------|----------|
-| **Cline** | ✅ 客户端 `tools` 原样透传，返回标准 `tool_calls` |
-| **OpenCode** | ⚠️ 仅支持其内置工具（bash / websearch 等，在服务端执行）；标准 function calling 在免费层不可靠 |
-
-OpenCode 的限制原因（实测结论）：其模型自带 27 个内置工具，会直接忽略外部注入的工具
-说明；而试图禁用内置工具则会触发免费层风控 —— 名字不匹配会引发大量 `session.error`
-并挂死请求，全部禁用成功后上游立刻返回
-`403 OpenCode's free tier can only be used from within OpenCode`。
-桥接实现已保留，可通过 `OpenCodeClient(bridge_tools=True)` 显式开启，供自建付费模型场景使用。
-
----
-
-## 系统架构
-
-```
-客户端 (OpenAI SDK / 第三方应用)
-  |
-  | POST /v1/chat/completions (model="策略名称")
-  v
-[proxy.py] -- 根据模型名解析策略
-  |
-  v
-[balancer.py] -- 选择路由规则 + API Key
-  |                (5 种负载均衡策略 / 3 种 Key 策略)
-  v
-[forwarder.py] -- 协议适配 + 发送上游请求
-  |                (OpenAI / Claude / Gemini / 本地 CLI 私有协议 / 免费网关渠道)
-  v
-[protocol_adapter.py] -- 可选输出格式转换
-  |
-  v
-[stream_handler.py] -- SSE 流式处理
-  |
-  v
-客户端 <--- 标准 OpenAI 格式响应
-```
+### 🛡️ 协议互转与多端点
+- OpenAI / Anthropic Claude / Google Gemini 协议自动互转，任意 SDK 调用任意模型
+- 提供 `/v1/chat/completions`、`/v1/responses`、`/v1/messages`、`/v1beta/models/...:generateContent` 等兼容端点
 
 ---
 
 ## 快速开始
 
-### 环境要求
+### 桌面版（推荐）
 
-- Python 3.10+
-- Node.js 18+
+从 [Releases](https://github.com/licorxj/QM-LocalRouter/releases) 下载对应平台的安装包：
 
-### 1. 克隆与初始化
+- **Windows**：`LocalRouter-Setup-x.x.x-x64.exe`（Inno Setup 安装，数据保留在 `%LOCALAPPDATA%\Programs\LocalRouter\data`）
+- **macOS**：`LocalRouter-Setup-x.x.x-macos.pkg`
+- **Linux**：`apirouter-linux.zip`（解压后运行 `run.sh`）
+
+安装后打开桌面应用，Web UI 与 API 默认在 `http://127.0.0.1:12002`。
+
+### 源码部署
+
+环境要求：Python 3.10+ / Node.js 18+
 
 ```bash
 git clone https://github.com/licorxj/QM-LocalRouter.git
 cd QM-LocalRouter
 
-# 初始化数据库（自动创建虚环境、安装依赖、创建数据库）
-cd scripts
-python init_db.py        # 跨平台 Python 脚本
-# 或: ./init_db.sh       # Linux/macOS
-# 或: init_db.bat        # Windows
-cd ..
+# 初始化（自动建虚拟环境、装依赖、建数据库）
+cd scripts && python init_db.py && cd ..
+
+# 启动：用管理脚本
+./scripts/manage.sh start          # Linux/macOS
+scripts\manage.bat start           # Windows
+
+# 或手动启动（两个终端）
+# 终端 1：cd backend && uvicorn app.main:app --host 0.0.0.0 --port 12002
+# 终端 2：cd frontend && npm install && npm run dev
 ```
 
-### 2. 启动服务
+浏览器打开 **http://localhost:12001**（开发模式）或 **http://localhost:12002**（生产 / 桌面版）。
 
-**方式 A：使用管理脚本（推荐）**
+### 第一步
 
-```bash
-# Linux/macOS
-chmod +x scripts/manage.sh
-./scripts/manage.sh start
-
-# Windows
-scripts\manage.bat start
-```
-
-**方式 B：手动启动**
-
-```bash
-# 终端 1 - 后端
-cd backend
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Linux/macOS
-uvicorn app.main:app --host 0.0.0.0 --port 12002
-
-# 终端 2 - 前端
-cd frontend
-npm install
-npm run dev
-```
-
-### 3. 使用
-
-1. 浏览器打开 **http://localhost:12001**
-2. **零成本起步**：进入 **平台管理 → 免费模型合集**，一键加入免费渠道，立即获得 20+ 个 $0 模型
-3. 或点击 **+** 添加自己的平台（支持 **热门平台** 模板），添加 API Key
-4. 添加模型 -- 可手动、一键同步、或使用"同步平台模型"弹窗
-5. 进入 **路由策略**，创建策略并添加路由规则
-6. 客户端中设置 `base_url` 为 `http://localhost:12002/v1`，`model` 为策略名称
-
----
-
-## 技术栈
-
-| 层 | 技术 | 说明 |
-|-------|-----------|------|
-| 前端 | React 18 + TypeScript + Vite 5 | 单页应用，快速热更新 |
-| UI | Tailwind CSS 3 + Radix UI | 「暗夜路由」设计系统，深浅双主题 |
-| 状态管理 | Zustand + TanStack Query 5 | 轻量状态 + 服务端缓存 |
-| 国际化 | 自定义 React Context | 中文 / 英文 |
-| 后端 | Python 3.10+ + FastAPI + uvicorn | 异步高性能 API |
-| 数据库 | SQLite + SQLAlchemy 2.0 (异步) | 零配置本地存储 |
-| 加密 | cryptography (Fernet) | API Key 加密存储 |
-| HTTP | httpx (异步) | 上游 API 请求转发 |
-
----
-
-## API 概览
-
-所有代理端点位于 `/v1/`，与 OpenAI SDK 完全兼容。
-
-响应格式由**请求端点**决定（不再有全局开关）：
-
-| 端点 | 客户端格式 |
-|------|------------|
-| `POST /v1/chat/completions` | OpenAI Chat Completions（流式 + 非流式） |
-| `POST /v1/responses` | OpenAI Responses API（Codex/Cline 客户端，无状态） |
-| `POST /v1/messages` | Anthropic Messages API（Claude SDK，base_url 指向 `/v1`） |
-| `POST /v1beta/models/{model}:generateContent` | Gemini GenerateContent（Gemini SDK，base_url 指向 `/v1beta`） |
-| `GET /v1beta/models` | Gemini 风格模型列表 |
-
-后端自动把入站格式转成上游协议；当客户端格式与上游协议一致时直接透传，
-不做无用转换。
-
-| 端点 | 说明 |
-|------|------|
-| `POST /v1/chat/completions` | 聊天补全（流式 + 非流式） |
-| `POST /v1/responses` | Responses API（Codex/Cline 客户端可直接接入，流式 + 非流式，无状态） |
-| `POST /v1/completions` | 文本补全 |
-| `POST /v1/embeddings` | 向量嵌入 |
-| `POST /v1/images/generations` | 图像生成 |
-| `POST /v1/audio/speech` | 语音合成 |
-| `POST /v1/videos` | 视频生成 |
-| `GET /v1/models` | 列出活跃策略 |
-
-管理 API 在 `/api/` 下（Swagger：`http://localhost:12002/docs`）
+1. 进入 **账号接入** 或 **平台接入**，添加你的账号 / API Key
+2. 添加模型——可手动录入，或一键从上游同步
+3. 进入 **组合路由**，创建策略并添加路由规则
+4. 客户端设置 `base_url` 为 `http://localhost:12002/v1`、`model` 为策略名称
 
 ---
 
@@ -377,7 +135,22 @@ curl http://localhost:12002/v1/chat/completions \
   -d '{"model":"my-strategy","messages":[{"role":"user","content":"你好！"}]}'
 ```
 
-> **注意**: `api_key` 可填任意值。`model` 字段必须填策略名称。
+> `api_key` 可填任意值；`model` 必须填**策略名称**。管理 API 在 `/api/` 下，Swagger 文档见 `http://localhost:12002/docs`。
+
+---
+
+## 技术栈
+
+| 层 | 技术 |
+|----|------|
+| 前端 | React 18 + TypeScript + Vite 5 |
+| UI | Tailwind CSS 3 + Radix UI（深浅双主题） |
+| 状态管理 | Zustand + TanStack Query 5 |
+| 后端 | Python 3.10+ / FastAPI / uvicorn（异步） |
+| 数据库 | SQLite + SQLAlchemy 2.0（异步） |
+| 加密 | cryptography（Fernet） |
+| 路由内核 | LiteLLM（多协议适配 / 懒加载提供商） |
+| 打包 | PyInstaller（单文件 exe）+ Inno Setup（Windows 安装包） |
 
 ---
 
@@ -386,12 +159,11 @@ curl http://localhost:12002/v1/chat/completions \
 | 文档 | 说明 |
 |------|------|
 | [README.md](README.md) | English documentation |
-| [docs/USAGE.md](docs/USAGE.md) | English user guide |
 | [docs/USAGE_ZH.md](docs/USAGE_ZH.md) | 中文使用教程 |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker、VPS、Windows、Linux） |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Docker / VPS / Windows / Linux） |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发者文档 |
 | [docs/API.md](docs/API.md) | API 参考 |
-| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | 依赖清单 |
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | 依赖清单与插件分发策略 |
 
 ---
 

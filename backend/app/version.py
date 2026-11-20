@@ -46,12 +46,15 @@ def _git_describe() -> dict | None:
     if not (REPOSITORY_ROOT / ".git").is_dir():
         return None
     try:
+        _kw = ({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+               if sys.platform == "win32" else {})
         out = subprocess.run(
             ["git", "describe", "--tags", "--always", "--dirty"],
             cwd=str(REPOSITORY_ROOT),
             capture_output=True,
             text=True,
             timeout=10,
+            **_kw,
         )
     except Exception:
         return None

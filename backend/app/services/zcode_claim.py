@@ -24,6 +24,13 @@ import subprocess
 import sys
 import time
 
+# Windows 下调用控制台工具（reg/tasklist/taskkill/netstat/node）时禁止弹出黑色
+# cmd 窗口；frozen（console=False）桌面版尤其需要，否则每次签到检测都会闪窗。
+_NO_WINDOW_KW: dict = (
+    {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    if sys.platform == "win32" else {}
+)
+
 # backend/app/services/zcode_claim.py -> backend/data/zcode-autoclaim
 SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(os.path.dirname(SERVICE_DIR))
@@ -93,6 +100,7 @@ def _registry_exe() -> str:
             proc = subprocess.run(
                 ["reg", "query", root, "/s", "/f", "ZCode"],
                 capture_output=True, text=True, timeout=8, check=False,
+                **_NO_WINDOW_KW,
             )
         except Exception:
             continue
@@ -151,7 +159,8 @@ def detect_installation(force: bool = False) -> dict:
         if node:
             try:
                 proc = subprocess.run([node, "--version"], capture_output=True,
-                                      text=True, timeout=6, check=False)
+                                      text=True, timeout=6, check=False,
+                                      **_NO_WINDOW_KW)
                 node_version = (proc.stdout or "").strip()
             except Exception:
                 node_version = ""
@@ -271,6 +280,7 @@ def _zcode_pids() -> list[int]:
         proc = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq ZCode.exe", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, timeout=10, check=False,
+            **_NO_WINDOW_KW,
         )
     except Exception:
         return []
@@ -286,7 +296,8 @@ def _kill_zcode_tree(pid: int):
     """按进程树强杀（ZCode 会派生多个子进程），忽略已退出。"""
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       capture_output=True, text=True, timeout=15, check=False)
+                       capture_output=True, text=True, timeout=15, check=False,
+                       **_NO_WINDOW_KW)
     else:
         try:
             os.killpg(os.getpgid(pid), 9)
@@ -516,7 +527,8 @@ def _pids_listening_on(port: int) -> list[int]:
     pids: list[int] = set()
     try:
         proc = subprocess.run(["netstat", "-ano", "-p", "TCP"],
-                              capture_output=True, text=True, timeout=10, check=False)
+                              capture_output=True, text=True, timeout=10, check=False,
+                              **_NO_WINDOW_KW)
         for line in proc.stdout.splitlines():
             if f":{port}" not in line or "LISTENING" not in line.upper():
                 continue
@@ -531,7 +543,8 @@ def _pids_listening_on(port: int) -> list[int]:
         try:
             q = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=6, check=False)
+                capture_output=True, text=True, timeout=6, check=False,
+                **_NO_WINDOW_KW)
             if "ZCode.exe" in q.stdout:
                 out.append(pid)
         except Exception:
