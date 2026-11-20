@@ -157,7 +157,7 @@ jobs:
           retention-days: 7
 
   release:
-    name: Publish GitHub Release
+    name: Stage GitHub Release (draft)
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -166,9 +166,18 @@ jobs:
         with:
           path: packages
 
-      - name: Create release and attach every asset
+      # Create the release as a DRAFT on purpose:
+      #  1. The Windows installer is built locally by the maintainer and must be
+      #     appended with `gh release upload <tag> <exe>` before publishing.
+      #  2. Repositories with "immutable releases" enabled permanently lock a
+      #     tag once its release is published, so publishing here would block
+      #     the local Windows upload (and any later fix) for that tag.
+      # After uploading the Windows exe manually, publish with:
+      #   gh release edit <tag> --draft=false
+      - name: Create DRAFT release and attach CI assets
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             packages/*/*.zip
             packages/*/*.pkg
