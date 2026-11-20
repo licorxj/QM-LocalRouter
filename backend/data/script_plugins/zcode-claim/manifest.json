@@ -1,0 +1,29 @@
+{
+  "id": "zcode-claim",
+  "name": "ZCode 领卡",
+  "description": "ZCode 免费额度卡自动领取（纯 HTTP，无需启动本地客户端）。通过本项目已登录的 ZCode 账号 JWT，调用官方 preview/claim 接口领取活动赠送的免费卡；支持按账号领取与批量领取，遇验证码/风控给出明确提示。移植自 7sen1ot/zcode2api 的领卡协议（Apache-2.0）。",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "function": "run",
+  "permissions": ["credentials.read"],
+  "settings": [
+    {
+      "key": "action",
+      "type": "select",
+      "label": { "zh": "操作", "en": "Action" },
+      "description": { "zh": "status=探测可领卡；claim=执行领取。", "en": "status=preview available cards; claim=execute claim." },
+      "options": [
+        { "value": "status", "label": { "zh": "查询可领卡", "en": "Preview cards" } },
+        { "value": "claim", "label": { "zh": "领取免费卡", "en": "Claim free cards" } }
+      ],
+      "default": "status"
+    },
+    {
+      "key": "app_version",
+      "type": "string",
+      "label": { "zh": "客户端版本", "en": "Client version" },
+      "description": { "zh": "领卡 API 使用的 ZCode 版本标识，上游变更时可调整。", "en": "ZCode app_version used by claim API; adjust if upstream changes." },
+      "default": "3.18.2"
+    }
+  ]
+}

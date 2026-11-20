@@ -23,6 +23,8 @@ interface ChatMessage {
   videoTask?: { id: string; status: string; videoUrl?: string; providerId?: number };
 }
 
+type AttachedFile = { name: string; type: string; file: File; preview?: string };
+
 interface ConversationItem {
   id: number;
   title: string;
@@ -306,10 +308,14 @@ export default function Chat() {
       loadConversations();
     } catch (err: any) { const errMsg = err.message || 'Video generation failed'; toast({ title: t('common.error'), description: errMsg, variant: 'destructive' }); setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + errMsg }]); } finally { setIsStreaming(false); }
   };
-  const doSendText = async (convId: number, prevMessages: ChatMessage[]) => {
-    const fileInfos = attachedFiles.map(f => ({ name: f.name, type: f.type, preview: f.preview }));
-    const userMsg: ChatMessage = { role: 'user', content: input.trim(), files: fileInfos.length > 0 ? fileInfos : undefined };
-    const allMessages = [...prevMessages, userMsg]; setMessages(allMessages); setInput(''); setAttachedFiles([]); setIsStreaming(true);
+  const doSendText = async (convId: number, prevMessages: ChatMessage[], contentOverride?: string, filesOverride?: AttachedFile[]) => {
+    const text = contentOverride !== undefined ? contentOverride : input;
+    const files = filesOverride !== undefined ? filesOverride : attachedFiles;
+    const fileInfos = files.map(f => ({ name: f.name, type: f.type, preview: f.preview }));
+    const userMsg: ChatMessage = { role: 'user', content: text.trim(), files: fileInfos.length > 0 ? fileInfos : undefined };
+    const allMessages = [...prevMessages, userMsg]; setMessages(allMessages);
+    if (contentOverride === undefined) { setInput(''); setAttachedFiles([]); }
+    setIsStreaming(true);
     const apiMessages = allMessages.map(m => {
       const parts: any[] = [];
       if (m.files && m.files.length > 0) { m.files.forEach(f => { if (f.type.startsWith('image/') && f.preview) parts.push({ type: 'image_url', image_url: { url: f.preview } }); else parts.push({ type: 'text', text: '[File: ' + f.name + ']' }); }); }
@@ -361,6 +367,41 @@ export default function Chat() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+  // 快捷测试：hi 文本测试 / 识图测试（附带项目内置默认图片）
+  const sendQuickTest = async (kind: 'hi' | 'vision') => {
+    if (!isReady || isStreaming) return;
+    let content: string;
+    let files: AttachedFile[] = [];
+    if (kind === 'hi') {
+      content = 'hi';
+    } else {
+      content = t('chat.visionTestPrompt');
+      try {
+        const res = await fetch('/licorxj.png');
+        const blob = await res.blob();
+        const file = new File([blob], 'licorxj.png', { type: 'image/png' });
+        const preview = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        files = [{ name: 'licorxj.png', type: 'image/png', file, preview }];
+      } catch { toast({ title: t('common.error'), description: t('chat.visionTestImageMissing'), variant: 'destructive' }); return; }
+    }
+    if (!activeConvId) {
+      try {
+        const res = await createConversation({ title: content.slice(0, 50), strategy_name: chatMode === 'strategy' ? selectedStrategy : '', chat_mode: chatMode, stream_mode: streamMode, model_used: chatMode === 'strategy' ? selectedStrategy : selectedModelId, provider_used: chatMode === 'model' ? String(selectedProviderId) : '' });
+        const newConv = { ...res.data, messages: '[]' };
+        setConvList(prev => [newConv, ...prev]); setActiveConvId(newConv.id);
+        await doSendText(newConv.id, [], content, files);
+      } catch { toast({ title: t('common.error'), variant: 'destructive' }); }
+      return;
+    }
+    await doSendText(activeConvId, messages, content, files);
+  };
+
   const filteredConvList = convSearch ? convList.filter(c => c.title.toLowerCase().includes(convSearch.toLowerCase())) : convList;
   const placeholderText = selectedModelType === 'image' ? t('chat.placeholderImage') : selectedModelType === 'tts' ? t('chat.placeholderTts') : selectedModelType === 'video' ? t('chat.placeholderVideo') : t('chat.placeholder');
   const TypeIcon = MODEL_TYPE_ICONS[selectedModelType] || Zap;
@@ -438,6 +479,10 @@ export default function Chat() {
             <input ref={fileInputRef} type='file' multiple className='hidden' onChange={handleFileAttach} />
             <Textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder={isReady ? placeholderText : t('chat.selectModelFirst')} className='flex-1 min-h-[40px] max-h-[200px] resize-none text-sm' disabled={isStreaming} />
             <Button size='sm' className='h-10 w-10 p-0' onClick={sendMessage} disabled={isStreaming || !isReady || (!input.trim() && attachedFiles.length === 0)}>{isStreaming ? <Loader2 className='h-4 w-4 animate-spin' /> : <Send className='h-4 w-4' />}</Button>
+            <div className='flex flex-col gap-1'>
+              <Button variant='outline' size='sm' className='h-[18px] px-2 text-[10px] whitespace-nowrap' onClick={() => sendQuickTest('hi')} disabled={isStreaming || !isReady} title={t('chat.hiTest')}>{t('chat.hiTest')}</Button>
+              <Button variant='outline' size='sm' className='h-[18px] px-2 text-[10px] whitespace-nowrap' onClick={() => sendQuickTest('vision')} disabled={isStreaming || !isReady} title={t('chat.visionTest')}>{t('chat.visionTest')}</Button>
+            </div>
           </div>
         </div>
       </div>

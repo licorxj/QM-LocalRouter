@@ -24,6 +24,8 @@ from app.routers import cloud_meta
 from app.routers import app_update
 from app.routers import accounts
 from app.routers import plugins as plugins_router
+from app.routers import script_plugins as script_plugins_router
+from app.routers import scheduled_tasks as scheduled_tasks_router
 from app.version import get_version_info
 
 
@@ -80,7 +82,31 @@ async def lifespan(app: FastAPI):
         plugin_manager.startup_sync()
     except Exception:
         pass
+    # 脚本插件定时任务调度器（静默启动）
+    try:
+        from app.services import script_scheduler
+        await script_scheduler.start()
+    except Exception:
+        pass
+    # 恢复已启用的 apiserver 型脚本插件（本地网关服务）
+    try:
+        from app.services import apiserver_manager
+        await apiserver_manager.recover_enabled()
+    except Exception:
+        pass
     yield
+    # 停止所有 apiserver 型插件进程
+    try:
+        from app.services import apiserver_manager
+        await apiserver_manager.shutdown_all()
+    except Exception:
+        pass
+    # 停止定时任务调度器
+    try:
+        from app.services import script_scheduler
+        await script_scheduler.stop()
+    except Exception:
+        pass
     # 关闭转发层共享的 httpx client 池（forwarder/ssl_relax 进程级复用）
     try:
         from app.utils import ssl_relax
@@ -114,6 +140,8 @@ app.include_router(cli_import.router)
 app.include_router(cloud_meta.router)
 app.include_router(app_update.router)
 app.include_router(plugins_router.router)
+app.include_router(script_plugins_router.router)
+app.include_router(scheduled_tasks_router.router)
 app.include_router(accounts.router)
 app.include_router(providers.router)
 app.include_router(proxy.alias_router)

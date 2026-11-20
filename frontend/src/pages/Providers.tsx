@@ -5,7 +5,7 @@ import {
   searchIcons, saveIcon, getHotProviders, getOnlineProviders, refreshOnlineProviders, getOauthProfiles,
   getFreeModels, joinFreeChannel,
   getKeys, createKey, createKeysBatch, deleteKey, testKey, testAllKeys, deleteInvalidKeys, recoverKeys,
-  startOauthLogin, getOauthStatus, getCliPlatforms, cliDetect, cliImport, cliBrowserStart, cliStatus,
+  startOauthLogin, getOauthStatus, getCliPlatforms, cliDetect, cliImport, cliBrowserStart, cliStatus, importQoderCli,
   getModels, createModel, updateModel, deleteModel, fetchModels, syncModels, testModel, testAllModels, deleteInvalidModels, clearModels,
 } from '../services/api';
 import { useI18n } from '../i18n';
@@ -740,13 +740,25 @@ const createModelMut = useMutation({
     if (!cliPlatform) return;
     setCliImporting(true);
     try {
-      const res = await cliImport({ platform: cliPlatform, provider_id: 0, ...payload });
-      qc.invalidateQueries({ queryKey: ['providers'] });
-      qc.invalidateQueries({ queryKey: ['keys'] });
-      setCliDialogOpen(false);
-      toast({ title: t('providers.cliImported'), description: (res.data?.alias || '') + ' · ' + t('providers.providerAutoCreated'), variant: 'success' });
+      if (cliPlatform === 'qoder' || cliPlatform === 'qodercn') {
+        // Qoder CLI 凭证写入 EchoBird 本地存储（echo 账号），走专用路由
+        const path = String(payload.detected_path || '');
+        if (!path) throw new Error('no detected path');
+        const res = await importQoderCli(path, cliPlatform);
+        qc.invalidateQueries({ queryKey: ['providers'] });
+        qc.invalidateQueries({ queryKey: ['keys'] });
+        qc.invalidateQueries({ queryKey: ['accounts'] });
+        setCliDialogOpen(false);
+        toast({ title: t('providers.cliImported'), description: (res.data?.identity || '') + ' · Qoder', variant: 'success' });
+      } else {
+        const res = await cliImport({ platform: cliPlatform, provider_id: 0, ...payload });
+        qc.invalidateQueries({ queryKey: ['providers'] });
+        qc.invalidateQueries({ queryKey: ['keys'] });
+        setCliDialogOpen(false);
+        toast({ title: t('providers.cliImported'), description: (res.data?.alias || '') + ' · ' + t('providers.providerAutoCreated'), variant: 'success' });
+      }
     } catch (e: any) {
-      toast({ title: t('providers.cliImportFailed'), description: e?.response?.data?.detail, variant: 'destructive' });
+      toast({ title: t('providers.cliImportFailed'), description: e?.response?.data?.detail || e?.message, variant: 'destructive' });
     }
     setCliImporting(false);
   }
@@ -1466,7 +1478,10 @@ const createModelMut = useMutation({
                              placeholder={t('providers.cliTokenPlaceholderZcode')} className='font-mono text-xs' />
                     </>
                   )}
-                  {cliPlatform !== 'trae' && cliPlatform !== 'opencode' && cliPlatform !== 'zcode' && (
+                  {(cliPlatform === 'qoder' || cliPlatform === 'qodercn') && (
+                    <p className='text-xs text-muted-foreground'>{t('providers.cliQoderNote')}</p>
+                  )}
+                  {cliPlatform !== 'trae' && cliPlatform !== 'opencode' && cliPlatform !== 'zcode' && cliPlatform !== 'qoder' && cliPlatform !== 'qodercn' && (
                     <Input value={cliPaste.refresh_token} onChange={e => setCliPaste(f => ({ ...f, refresh_token: e.target.value }))}
                            placeholder='refresh token' className='font-mono text-xs' />
                   )}
@@ -1480,7 +1495,7 @@ const createModelMut = useMutation({
                     <Input value={cliPaste.region} onChange={e => setCliPaste(f => ({ ...f, region: e.target.value }))} placeholder='region (us-east-1)' className='font-mono text-xs' />
                   )}
                   <Button size='sm' className='gap-1' onClick={() => runCliImport(cliPaste)}
-                          disabled={cliImporting || (cliPlatform !== 'opencode' && !cliPaste.token && !cliPaste.refresh_token && !cliPaste.code)}>
+                          disabled={cliImporting || (cliPlatform === 'qoder' || cliPlatform === 'qodercn') || (cliPlatform !== 'opencode' && !cliPaste.token && !cliPaste.refresh_token && !cliPaste.code)}>
                     {cliImporting ? <Loader2 className='w-3.5 h-3.5 animate-spin' /> : <KeyRound className='w-3.5 h-3.5' />}
                     {t('providers.cliImportBtn')}
                   </Button>

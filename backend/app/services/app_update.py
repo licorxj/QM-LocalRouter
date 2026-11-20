@@ -84,7 +84,7 @@ _download_task: asyncio.Task | None = None
 # ---------------------------------------------------------------------------
 
 def parse_version(value: str | None) -> tuple[int, ...]:
-    """'v2.0.11' / '2.0.11-1-gabc' / '2.0' -> (2, 0, 11)."""
+    """'v3.0.0' / '3.0.0-1-gabc' / '3.0' -> (3, 0, 0)."""
     if not value:
         return (0,)
     text = value.strip().lstrip("vV").split("-")[0]

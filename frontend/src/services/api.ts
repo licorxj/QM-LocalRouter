@@ -29,6 +29,9 @@ export const getOauthStatus = (sessionId: string) => api.get('/api/oauth/status/
 export const getCliPlatforms = () => api.get('/api/cli/platforms');
 export const cliDetect = (data: any) => api.post('/api/cli/detect', data);
 export const cliImport = (data: any) => api.post('/api/cli/import', data);
+// Qoder CLI 凭证导入走 EchoBird 本地存储的专用路由（非 api_keys）
+export const importQoderCli = (path: string, platform: string) =>
+  api.post('/api/accounts/qoder/cli/import', { path, platform });
 export const cliBrowserStart = (data: any) => api.post('/api/cli/browser-start', data);
 export const cliStatus = (sessionId: string) => api.get('/api/cli/status/' + sessionId);
 export const getProviders = () => api.get('/api/providers');
@@ -105,6 +108,9 @@ export const updateSettings = (data: any) => api.put("/api/settings", data);
 export const getLanIp = () => api.get("/api/settings/lan-ip");
 export const getRepositoryStatus = () => api.get("/api/settings/repository");
 export const updateRepository = () => api.post("/api/settings/repository/update");
+export const getAutoStart = () => api.get("/api/settings/auto-start");
+export const setAutoStart = (enabled: boolean) => api.post("/api/settings/auto-start", { enabled });
+export const restartPluginService = (pluginId: string) => api.post("/api/script-plugins/" + encodeURIComponent(pluginId) + "/service-restart");
 
 // Project self-update (GitHub Releases / git)
 export const checkAppUpdate = (fetch = true) => api.get(`/api/update/check?fetch=${fetch ? 1 : 0}`);
@@ -144,6 +150,40 @@ export const enablePlugin = (pluginId: string) => api.post('/api/plugins/' + plu
 export const disablePlugin = (pluginId: string) => api.post('/api/plugins/' + pluginId + '/disable');
 export const uninstallPlugin = (pluginId: string) => api.delete('/api/plugins/' + pluginId);
 export const updatePluginSettings = (data: any) => api.put('/api/plugins/settings', data);
+
+// Script Plugins (独立脚本插件：COS 分发 / 权限 / 执行)
+export const getScriptPlugins = () => api.get('/api/script-plugins');
+export const checkScriptCatalog = () => api.post('/api/script-plugins/check');
+export const installScriptPlugin = (data: { plugin_id: string; download_url?: string; sha256?: string }) =>
+  api.post('/api/script-plugins/install', data);
+export const getScriptPluginTask = () => api.get('/api/script-plugins/task');
+export const enableScriptPlugin = (pluginId: string) => api.post('/api/script-plugins/' + pluginId + '/enable');
+export const disableScriptPlugin = (pluginId: string) => api.post('/api/script-plugins/' + pluginId + '/disable');
+export const uninstallScriptPlugin = (pluginId: string) => api.delete('/api/script-plugins/' + pluginId);
+export const getScriptPluginSettings = (pluginId: string) => api.get('/api/script-plugins/' + pluginId + '/settings');
+export const saveScriptPluginSettings = (pluginId: string, values: Record<string, any>) =>
+  api.put('/api/script-plugins/' + pluginId + '/settings', { values });
+export const runScriptPlugin = (pluginId: string, params?: Record<string, any>) =>
+  api.post('/api/script-plugins/' + pluginId + '/run', { params: params || {} });
+export const getScriptPluginAudit = (limit = 100) => api.get('/api/script-plugins/audit?limit=' + limit);
+
+// 项目内已登录账号 + 多账号批量执行（后台任务）
+export const getWorkbuddyAccounts = () => api.get('/api/script-plugins/workbuddy-accounts');
+export const getPluginAccounts = (pluginId: string) => api.get('/api/script-plugins/plugin-accounts?plugin_id=' + encodeURIComponent(pluginId));
+export const runScriptPluginBatch = (pluginId: string, data: { account_ids?: string[]; all_accounts?: boolean; params?: Record<string, any> }) =>
+  api.post('/api/script-plugins/' + pluginId + '/run-batch', data);
+export const getScriptRunTask = (taskId: string) => api.get('/api/script-plugins/run-task/' + taskId);
+
+// 脚本插件定时任务（设置 / 列表 / 执行日志）
+export const getScheduleTasks = () => api.get('/api/scheduled-tasks');
+export const createScheduleTask = (data: any) => api.post('/api/scheduled-tasks', data);
+export const updateScheduleTask = (id: number, data: any) => api.put('/api/scheduled-tasks/' + id, data);
+export const deleteScheduleTask = (id: number) => api.delete('/api/scheduled-tasks/' + id);
+export const toggleScheduleTask = (id: number) => api.post('/api/scheduled-tasks/' + id + '/toggle');
+export const runScheduleTaskNow = (id: number, data?: any) => api.post('/api/scheduled-tasks/' + id + '/run', data || {});
+export const getScheduleRuns = (taskId?: number | null, limit = 100) =>
+  api.get('/api/scheduled-tasks/runs?limit=' + limit + (taskId ? '&task_id=' + taskId : ''));
+export const getScheduleStats = () => api.get('/api/scheduled-tasks/stats');
 
 // Conversations
 export const getConversations = () => api.get('/api/conversations');

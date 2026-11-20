@@ -2,6 +2,19 @@ name: Build Release (Windows / macOS / Linux)
 
 # Build native single-file executables for the three desktop platforms and
 # attach them to a GitHub Release when a version tag (v*) is pushed.
+#
+# NOTE ON PLUGINS: plugins are NOT shipped in these release assets. They are
+# downloaded on demand by the app from the COS plugin catalog (index.json) at
+# runtime. In particular the compiled `opencode2api` gateway binary is never
+# bundled here. The staging steps below copy only the app executable, frontend
+# dist, run scripts and .env.example; they intentionally exclude any
+# data/plugins or data/script_plugins content. A verification step asserts no
+# plugin artifacts slipped into the staged package.
+#
+# NOTE ON WINDOWS: the Windows installer (exe) is built locally by the
+# maintainer and uploaded to the Release manually with `gh release upload`.
+# This workflow intentionally builds only Linux and macOS to avoid duplicate
+# Windows assets with the same filename.
 on:
   push:
     tags:
@@ -22,8 +35,6 @@ jobs:
             asset: apirouter-linux
           - os: macos-latest
             asset: apirouter-macos
-          - os: windows-latest
-            asset: apirouter-windows
 
     steps:
       - name: Checkout
@@ -94,37 +105,6 @@ jobs:
           ( cd "$STAGE" && zip -r "../$ASSET.zip" . )
         shell: bash
 
-      - name: Stage package (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $asset = "${{ matrix.asset }}"
-          $stage = "release-stage"
-          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "dist/apirouter.exe" "$stage/apirouter.exe"
-          Copy-Item "release/run.bat" "$stage/run.bat"
-          if (Test-Path "frontend/dist") { Copy-Item -Recurse "frontend/dist" "$stage/frontend/dist" }
-          if (Test-Path ".env.example") { Copy-Item ".env.example" "$stage/.env.example" }
-          Compress-Archive -Path "$stage/*" -DestinationPath "$asset.zip" -Force
-        shell: pwsh
-
-      # Reuses the frontend/dist and dist/apirouter.exe built above
-      # (-SkipFrontend -SkipBackend) and stages + compiles the Inno Setup
-      # installer. Version comes from the pushed v* tag via git describe.
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
-        run: scripts/build-windows-installer.ps1 -SkipFrontend -SkipBackend
-        shell: pwsh
-
-      - name: Upload installer artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: apirouter-windows-installer
-          path: dist/installer/*.exe
-          if-no-files-found: error
-          retention-days: 7
-
       # Reuses the frontend/dist and dist/{apirouter,LocalRouter} built above
       # (--skip-frontend --skip-backend), assembles LocalRouter.app and
       # compiles the per-user .pkg installer. Version comes from the pushed
@@ -143,7 +123,27 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # The three platform jobs run in parallel, so they must NOT create/publish
+      # Plugins are intentionally excluded from release packages; users fetch
+      # them on demand from the COS catalog. Fail the build if any plugin
+      # artifacts slipped in, so a future change cannot silently bundle the
+      # compiled gateway binary (or any other plugin) into a GitHub asset.
+      - name: Verify no plugins in release package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ASSET="${{ matrix.asset }}"
+          # Match plugin artifact PATHS/FILENAMES only (anchored), not bare
+          # keywords: the frontend bundle legitimately mentions "opencode2api"
+          # in UI copy, which must not fail this check.
+          BAD=$(unzip -Z1 "$ASSET.zip" | grep -Ei '(^|/)(script_plugins|plugins)/|(^|/)opencode2api(\.exe)?$|(^|/)(installed\.json|audit\.jsonl|manifest\.json)$' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::Plugin artifacts found in $ASSET.zip:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "Verified: $ASSET.zip contains no plugin artifacts"
+        shell: bash
+
+      # Both platform jobs run in parallel, so they must NOT create/publish
       # the Release themselves: whichever finishes first would publish an
       # immutable Release and the others would fail to upload their assets.
       # Each job only uploads its zip as a workflow artifact; the single
@@ -171,9 +171,10 @@ jobs:
         with:
           files: |
             packages/*/*.zip
-            packages/*/*.exe
             packages/*/*.pkg
-          fail_on_unmatched_files: true
+          # Windows .exe installer is uploaded separately by the maintainer
+          # (built locally); do not fail when no CI-built exe exists.
+          fail_on_unmatched_files: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

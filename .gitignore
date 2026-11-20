@@ -89,6 +89,32 @@ run/
 
 # v2.0.9 分发文件夹（本地整理用）
 /2.0.9/
+/2.0.10/
+/2.0.11/
 
-# 运行时网关配置（含密钥，不入库）
+# === 脚本插件系统：本地运行态 / 安装态（含绝对路径与密钥，不入库） ===
+backend/data/script_plugins/installed.json
+backend/data/script_plugins/audit.jsonl
+backend/data/script_plugins/packages/
+backend/data/script_plugins/apiserver-run/
+backend/data/script_plugins/staging/
+# 打包临时脚本与源目录/中间产物（发布物在 COS，本地副本不入库）
+backend/data/script_plugins/_build/_*.py
+backend/data/script_plugins/_build/_*.json
+backend/data/script_plugins/_build/opencode2api-src/
+backend/data/script_plugins/_build/opencode2api-apiserver-*.zip
+backend/data/script_plugins/opencode2api-apiserver/
+
+# === 二进制 worker 插件：本地运行态 / 安装态（不入库） ===
+backend/data/plugins/installed.json
+backend/data/plugins/packages/
+backend/data/plugins/staging/
+
+# === 运行时用户数据（不入库） ===
+/data/
+
+# === IDE / 项目辅助配置（非源码，不入库） ===
+.codebuddy/
+
+# === 运行时网关配置（含密钥，不入库） ===
 /config.json

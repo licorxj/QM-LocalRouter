@@ -523,18 +523,31 @@ async def claim_account(key_id: int, db: AsyncSession = Depends(get_db)):
     invalidate_snapshot()
     card = account_hub.account_card(api_key, provider)
     if platform in ("qoder", "qodercn"):
-        # 签到成功后立即落库签到状态，避免刷新页面时短暂显示未签
-        payload = account_quota.load_quota_cache(api_key) or {}
-        payload["checkin"] = {
-            "claimed": True,
-            "claimed_at": int(time.time()),
-            "reset_at": result.get("reset_at"),
-        }
-        payload.setdefault("fetched_at", int(time.time()))
-        account_quota.save_quota_cache(api_key, payload)
-        await db.commit()
-        await db.refresh(api_key)
-        card = account_hub.account_card(api_key, provider)
+        # 签到成功后立即重拉额度（奖励进加量包）+ 落库签到状态，避免只显示提示不显示积分
+        try:
+            fresh = await account_quota.fetch_quota(api_key, provider)
+            if fresh:
+                fresh["checkin"] = {
+                    "claimed": True,
+                    "claimed_at": int(time.time()),
+                    "reset_at": result.get("reset_at"),
+                }
+                account_quota.save_quota_cache(api_key, fresh)
+                await db.commit()
+                await db.refresh(api_key)
+                card = account_hub.account_card(api_key, provider)
+        except Exception:
+            # 重拉失败时仍落库签到状态，保证卡片显示已签
+            payload = account_quota.load_quota_cache(api_key) or {}
+            payload["checkin"] = {
+                "claimed": True, "claimed_at": int(time.time()),
+                "reset_at": result.get("reset_at"),
+            }
+            payload.setdefault("fetched_at", int(time.time()))
+            account_quota.save_quota_cache(api_key, payload)
+            await db.commit()
+            await db.refresh(api_key)
+            card = account_hub.account_card(api_key, provider)
     else:
         try:
             payload = await account_quota.fetch_quota(api_key, provider)
@@ -649,15 +662,81 @@ async def echo_account_claim(platform: str, account_id: str):
     try:
         result = await qoder_campaign.claim_with_creds(creds, platform)
     except qoder_campaign.CampaignError as e:
+        qoder_campaign._log_activity(creds, platform, "daily_claim", False, e.message)
         raise HTTPException(400, e.message)
+    qoder_campaign._log_activity(
+        creds, platform, "daily_claim", True,
+        "already" if result.get("already") else "claimed")
     # 已签（新签或此前已领）都回写状态，供卡片展示；claimed_at 取查询时刻
     native_accounts._save_echo_summary(
         platform, account_id, {"daily_claimed_at": int(time.time())})
     # 同步更新内存 entry，保证本次返回的卡片也显示已签
     (entry.get("extra") or {}).setdefault("summary", {})["daily_claimed_at"] = int(time.time())
     invalidate_snapshot()
-    card = native_accounts.account_card(platform, entry)
+    # 签到奖励（加量包 Credits）发到上游后立即重拉额度，避免"提示 +100 但余额不显示"
+    try:
+        card = await native_accounts.refresh_account(platform, account_id)
+    except Exception:
+        card = native_accounts.account_card(platform, entry)
     return {**card, "claim": result}
+
+
+@router.get("/qoder/cli/scan")
+async def qoder_cli_scan():
+    """只读扫描本机 Qoder CLI 凭证（不含明文令牌），供导入预览。"""
+    return {"items": native_accounts.scan_qoder_cli_credentials()}
+
+
+@router.post("/qoder/cli/import")
+async def qoder_cli_import(body: dict):
+    """导入一个 Qoder CLI 凭证文件到 EchoBird 账号存储。
+
+    body: {"path": "C:/Users/.../.qoder/.auth/user", "platform": "qoder"|"qodercn"}
+    """
+    path = str((body or {}).get("path") or "")
+    platform = str((body or {}).get("platform") or "") or None
+    if not path:
+        raise HTTPException(400, "缺少凭证文件路径")
+    try:
+        result = native_accounts.import_qoder_cli_credential(path, platform)
+    except EchoError as e:
+        raise HTTPException(400, e.message)
+    invalidate_snapshot()
+    return result
+
+
+@router.post("/echo/{platform}/{account_id}/claim-pro")
+async def echo_account_claim_pro(platform: str, account_id: str):
+    """Qoder / Qoder CN（echo 账号）领取 Pro 福利包（一次性，幂等）。"""
+    _echo_platform(platform)
+    if platform not in ("qoder", "qodercn"):
+        raise HTTPException(400, "该平台暂不支持 Pro 福利")
+    entries = native_accounts.list_echo_accounts(platform)
+    entry = next((e for e in entries if e["account_id"] == account_id), None)
+    if not entry:
+        raise HTTPException(404, "Account not found")
+    creds = (entry.get("extra") or {}).get("creds") or {}
+    try:
+        result = await qoder_campaign.pro_claim(creds, platform)
+    except qoder_campaign.CampaignError as e:
+        qoder_campaign._log_activity(creds, platform, "pro_claim", False, e.message)
+        raise HTTPException(400, e.message)
+    qoder_campaign._log_activity(creds, platform, "pro_claim", True,
+                                 "already" if result.get("already") else "claimed",
+                                 amount=int(result.get("amount") or 0))
+    invalidate_snapshot()
+    try:
+        card = await native_accounts.refresh_account(platform, account_id)
+    except Exception:
+        card = native_accounts.account_card(platform, entry)
+    return {**card, "claim": result}
+
+
+@router.get("/qoder/activity")
+async def qoder_activity_recent(limit: int = 100):
+    """Qoder 签到 / 领奖流水（最近 N 条，倒序）。"""
+    from app.services import qoder_activity
+    return {"items": qoder_activity.recent(limit=limit)}
 
 
 @router.delete("/echo/{platform}/{account_id}")

@@ -197,6 +197,29 @@ async def update_settings(data: AppSettings):
     _save_settings(current)
     return _with_runtime_fields(current)
 
+@router.get("/auto-start")
+async def get_auto_start():
+    """查询开机自启动真实状态（以启动目录中脚本是否存在为准）。"""
+    from app.services import autostart
+    return autostart.status()
+
+
+class AutoStartIn(BaseModel):
+    enabled: bool
+
+
+@router.post("/auto-start")
+async def set_auto_start(data: AutoStartIn):
+    """开启/关闭开机自启动（写入或删除用户启动目录中的 VBS 脚本）。"""
+    from app.services import autostart
+    if not autostart.is_supported():
+        raise HTTPException(400, "Auto start is only supported on Windows")
+    ok = autostart.enable() if data.enabled else autostart.disable()
+    if not ok:
+        raise HTTPException(500, "Failed to update auto start setting")
+    return autostart.status()
+
+
 @router.get("/lan-ip")
 async def lan_ip():
     return {"ip": get_lan_ip()}

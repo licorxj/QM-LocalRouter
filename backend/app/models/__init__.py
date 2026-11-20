@@ -5,5 +5,6 @@ from app.models.strategy import Strategy, StrategyRule
 from app.models.log import RequestLog
 from app.models.rotation_state import RotationState
 from app.models.client_key import ClientKey
+from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 
-__all__ = ["Provider", "ApiKey", "Model", "Strategy", "StrategyRule", "RequestLog", "RotationState", "ClientKey"]
+__all__ = ["Provider", "ApiKey", "Model", "Strategy", "StrategyRule", "RequestLog", "RotationState", "ClientKey", "ScheduledTask", "ScheduledTaskRun"]

@@ -785,51 +785,42 @@ async def refresh_account(platform: str, account_id: str) -> dict:
 
     elif platform in ("qoder", "qodercn"):
         creds = extra.get("creds") or {}
-        usage_headers = {"Cosy-ClientType": "10", "User-Agent": "Qoder"}
+        from app.services import qoder_quota
 
-        async def _qoder_usage(token: str):
-            async with _http() as client:
-                return await _json_request(client, "GET", cfg["openapi"] + "/sash/api/v2/me/usage",
-                                           token=token, headers=usage_headers)
-
-        # EchoBird quota.rs：usage 用 device_token 鉴权（job token 仅对话网关用）
-        try:
-            usage = await _qoder_usage(creds.get("device_token") or creds.get("access_token") or "")
-        except EchoError:
-            # 令牌过期：续期（deviceToken 必续）后重试一次
+        # 跨区探测 + 套餐名 + 共享额度归一（qoder2api-hub 思路）。
+        # 凭据失效时先续期再查一次。
+        usage = await qoder_quota.fetch_usage(creds, platform, timeout=20)
+        if usage.get("login_required") or (usage.get("error") and not usage.get("windows")):
             await _qoder_renew(cfg, extra, account_id)
-            usage = await _qoder_usage(creds.get("device_token") or creds.get("access_token") or "")
-        # plan 档位：userType（personal_standard 等），与 EchoBird plan 解析对齐
-        user_type = ((usage.get("qoderUsage") or {}).get("userType") or "").strip()
-        if user_type:
-            entry["plan"] = user_type
-            # 回写存储 summary，聚合卡片无需刷新也能显示档位
-            _save_echo_summary(platform, account_id, {"plan": user_type})
-        windows = []
-        if usage.get("displayMode") == "enterprise":
-            metrics.append({"key": "quota", "label": "Enterprise", "value": "—", "percent": None, "reset_at": None})
-        else:
-            value = usage.get("qoderUsage") or {}
-            def _window(node, label):
-                if not isinstance(node, dict):
-                    return None
-                return {"label": label,
-                        "remaining": node.get("remaining") if node.get("remaining") is not None else node.get("remainingQuota"),
-                        "total": node.get("total") if node.get("total") is not None else node.get("totalQuota"),
-                        "reset_at": None}
-            for a, b, label in (("userQuota", "user_quota", "Credits"), ("addOnQuota", "add_on_quota", "Add-on"),
-                                ("orgResourcePackage", "org_resource_package", "Organization")):
-                node = value.get(a) if value.get(a) is not None else value.get(b)
-                w = _window(node, label)
-                if w:
-                    windows.append(w)
-            for node in value.get("dedicatedResourcePackages") or []:
-                w = _window(node, "Dedicated")
-                if w:
-                    windows.append(w)
+            creds = (extra.get("creds") or {})
+            usage = await qoder_quota.fetch_usage(creds, platform, timeout=20)
+
+        plan = str(usage.get("plan") or "").strip()
+        if plan:
+            entry["plan"] = plan
+            _save_echo_summary(platform, account_id, {"plan": plan})
+
+        windows = usage.get("windows") or []
+        # 退化守卫：上游返回全 0 且本地已有非空快照时保留旧值，避免额度被瞬时异常清零
+        degraded = bool(usage.get("degraded"))
+        old_metrics = entry.get("metrics") or []
+        if degraded and old_metrics and any(
+            m.get("value") not in (None, "", "0") for m in old_metrics
+        ):
+            windows = []
         for w in windows:
-            metrics.append({"key": "quota", "label": w["label"], "value": _fmt(w.get("remaining")),
-                            "percent": _pct(w.get("remaining"), w.get("total")), "reset_at": None})
+            remaining = w.get("remaining")
+            metrics.append({
+                "key": "quota", "label": w.get("name") or "Credits",
+                "value": "—" if remaining is None else _fmt(remaining),
+                "percent": _pct(remaining, w.get("total")),
+                "reset_at": w.get("expires_at"),
+            })
+        if not windows and degraded and old_metrics:
+            metrics = list(old_metrics)
+        if not metrics and usage.get("error"):
+            metrics = [{"key": "quota", "label": "额度查询失败", "value": usage["error"][:60],
+                        "percent": None, "reset_at": None}]
         entry["metrics_fetched_at"] = int(time.time())
         # 签到状态：拉取 campaign 资格，已签则回写 summary 的 daily_claimed_at（跨刷新持久化）
         try:
@@ -925,39 +916,115 @@ def _save_echo_credential(platform: str, account_id: str, creds: dict) -> None:
         _write_json(path, data)
 
 
-async def _qoder_renew(cfg: dict, extra: dict, account_id: str) -> None:
-    """Qoder 令牌续期（EchoBird refresh_at）：deviceToken 必续（usage 接口用它），
-    jobToken 尽力续（对话网关用）。CN 版 jobToken 端点不存在（400/404）属正常。
+_DEAD_SESSION_MARKERS = ("TOKEN_EXPIRE", "12153", "OFFLINE USER SESSION NOT FOUND",
+                         "OFFLINE_USER_SESSION_NOT_FOUND")
 
-    用原始 HTTP 而非 _json_request：续期端点的 4xx 是"该令牌不可用"信号，
-    不应中断其余令牌的续期。
+
+def _is_dead_session(body: str) -> bool:
+    upper = (body or "").upper()
+    return any(m in upper for m in _DEAD_SESSION_MARKERS)
+
+
+def _token_family(token: str) -> str:
+    """按 refresh token 前缀判断凭证族（qoder2api-hub token_family）。"""
+    t = str(token or "")
+    if t.startswith("drt-"):
+        return "device"
+    if t.startswith("jrt-"):
+        return "job"
+    if t.startswith("pt-"):
+        return "pat"
+    # 旧凭据无前缀：能续即续，按调用位置推断
+    return "legacy"
+
+
+async def _qoder_renew(cfg: dict, extra: dict, account_id: str) -> None:
+    """Qoder 令牌续期（对齐 qoder2api-hub refresh 的前缀路由策略）。
+
+    - device 族（drt-）：POST /api/v1/deviceToken/refresh（usage/账户接口鉴权主体）
+    - job 族（jrt-）：POST /api/v1/jobToken/refresh（对话网关用）
+    - PAT（pt-）：POST /api/v1/jobToken/exchange 换 jt-（最终兜底，不覆盖活跃 OAuth）
+    - legacy（旧凭据无前缀）：deviceToken 与 jobToken 都尽力续，兼容历史账号
+
+    CN 版 jobToken 端点不存在（400/404）属正常；401/403 且响应含死会话标记
+    时禁用账号（写 summary.active=false），提示重新登录。
     """
     creds = extra.get("creds") or {}
+    base = cfg["openapi"]
+    dead = False
+
+    def _apply_device(v: dict):
+        creds["device_token"] = v.get("token") or v.get("device_token") or creds.get("device_token")
+        if v.get("refresh_token"):
+            creds["device_refresh"] = v["refresh_token"]
+        if v.get("expires_in"):
+            try:
+                creds["device_expires_at"] = int(time.time() * 1000) + int(v["expires_in"])
+            except (TypeError, ValueError):
+                pass
+
+    def _apply_job(v: dict):
+        creds["access_token"] = v.get("token") or creds.get("access_token")
+        if v.get("refresh_token"):
+            creds["refresh_token"] = v["refresh_token"]
+        if v.get("expires_in"):
+            try:
+                creds["expires_at"] = int(time.time() * 1000) + int(v["expires_in"])
+            except (TypeError, ValueError):
+                pass
+
+    async def _post(path: str, body: dict, apply):
+        nonlocal dead
+        try:
+            resp = await client.post(base + path, json=body)
+        except httpx.HTTPError:
+            return False
+        if resp.status_code == 200:
+            try:
+                apply(resp.json())
+            except ValueError:
+                return False
+            return True
+        text = ""
+        try:
+            text = resp.text[:300]
+        except Exception:
+            pass
+        if resp.status_code in (401, 403) and _is_dead_session(text):
+            dead = True
+        return False
+
     async with _http() as client:
-        # 1) deviceToken（usage/账户接口的鉴权主体，本机实测刷新 200）
+        d_refresh = str(creds.get("device_refresh") or "")
+        j_refresh = str(creds.get("refresh_token") or "")
+        pat = str(creds.get("personal_token") or creds.get("pat") or "")
+        d_family = _token_family(d_refresh)
+        j_family = _token_family(j_refresh)
+
+        if d_family in ("device", "legacy"):
+            await _post("/api/v1/deviceToken/refresh", {"refresh_token": d_refresh}, _apply_device)
+        elif d_family in ("job", "pat") and d_refresh:
+            # refresh token 落在 job 端点（少数账号刷新字段混用）
+            await _post("/api/v1/jobToken/refresh", {"refresh_token": d_refresh}, _apply_job)
+
+        job_done = False
+        if j_family in ("job", "legacy") and j_refresh:
+            job_done = await _post("/api/v1/jobToken/refresh", {"refresh_token": j_refresh}, _apply_job)
+        elif j_family == "device" and j_refresh:
+            await _post("/api/v1/deviceToken/refresh", {"refresh_token": j_refresh}, _apply_device)
+
+        # PAT 兜底：jrt 刷新失败且存在 PAT 时用 PAT 重新换 jt-
+        if not job_done and pat:
+            await _post("/api/v1/jobToken/exchange", {"personal_token": pat}, _apply_job)
+
+    if dead:
+        # 死会话：禁用账号，卡片上提示重新登录（不删除历史凭据）
         try:
-            resp = await client.post(cfg["openapi"] + "/api/v1/deviceToken/refresh",
-                                     json={"refresh_token": creds.get("device_refresh") or ""})
-            if resp.status_code == 200:
-                v = resp.json()
-                creds["device_token"] = v.get("device_token") or v.get("token") or creds["device_token"]
-                creds["device_refresh"] = v.get("refresh_token") or creds["device_refresh"]
-            elif resp.status_code in (401, 403):
-                raise EchoError("登录已失效，请在右侧重新登录该平台账号", "login_required")
-        except EchoError:
-            raise
-        except httpx.HTTPError:
+            _save_echo_summary(cfg_key(cfg), account_id, {"active": False})
+            (extra.get("summary") or {})["active"] = False
+        except Exception:
             pass
-        # 2) jobToken（对话网关用；CN 版无此端点，失败静默）
-        try:
-            resp = await client.post(cfg["openapi"] + "/api/v1/jobToken/refresh",
-                                     json={"refresh_token": creds.get("refresh_token") or ""})
-            if resp.status_code == 200:
-                v = resp.json()
-                creds["access_token"] = v.get("token") or creds["access_token"]
-                creds["refresh_token"] = v.get("refresh_token") or creds["refresh_token"]
-        except httpx.HTTPError:
-            pass
+        raise EchoError("会话已失效（TOKEN_EXPIRE），请在右侧重新登录该平台账号", "login_required")
     _save_echo_credential(cfg_key(cfg), account_id, creds)
 
 
@@ -1013,3 +1080,131 @@ async def delete_account(platform: str, account_id: str) -> None:
 def echo_ready() -> bool:
     """EchoBird 兼容存储可用（有加密密钥文件，可读写已有账号）。"""
     return os.path.isfile(os.path.join(ECHO_DIR, "config", ".encryption_key"))
+
+
+# ---------------------------------------------------------------------------
+# Qoder CLI 凭证扫描 / 导入（移植 qoder2api-hub scan_desktop_credentials 的 CLI 分支）
+# 只读扫描 ~/.qoder/.auth、~/.qoder.cn/.auth 下的 user / user.{profile} 文件，
+# AES-128-CBC（key=iv=machine_id 前 16 字节）解密，绝不外泄明文令牌。
+# ---------------------------------------------------------------------------
+
+_QODER_CLI_DIRS = {
+    "qoder": os.path.expanduser("~/.qoder/.auth"),
+    "qodercn": os.path.expanduser("~/.qoder.cn/.auth"),
+}
+
+
+def _aes_cbc_decrypt_cli(cipher_b64: str, machine_key: str) -> dict:
+    """CLI user 文件解密：AES-128-CBC，key=iv=machine_id[:16]。明文或密文均可。"""
+    raw = (cipher_b64 or "").strip()
+    if raw.startswith("{"):
+        return json.loads(raw)
+    key = (machine_key or "")[:16].encode("utf-8")
+    if len(key) != 16:
+        raise ValueError("machine_id 不足 16 字节，无法解密 CLI 凭证")
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    dec = Cipher(algorithms.AES(key), modes.CBC(key)).decryptor()
+    plain = dec.update(base64.b64decode(raw)) + dec.finalize()
+    pad = plain[-1]
+    if isinstance(pad, int) and 0 < pad <= 16:
+        plain = plain[:-pad]
+    return json.loads(plain.decode("utf-8"))
+
+
+def scan_qoder_cli_credentials() -> list[dict]:
+    """只读扫描本机 Qoder CLI 凭证，返回候选列表（不含任何明文令牌）。"""
+    found: list[dict] = []
+    for platform, auth_dir in _QODER_CLI_DIRS.items():
+        if not os.path.isdir(auth_dir):
+            continue
+        machine_key = ""
+        try:
+            with open(os.path.join(auth_dir, "machine_id"), encoding="utf-8") as fh:
+                machine_key = fh.read().strip()
+        except Exception:
+            pass
+        try:
+            names = [n for n in os.listdir(auth_dir) if n == "user" or n.startswith("user.")]
+        except Exception:
+            names = []
+        for name in names:
+            path = os.path.join(auth_dir, name)
+            item = {"platform": platform, "path": path, "file": name,
+                    "readable": False, "valid": False, "uid": "",
+                    "nickname": "", "expires_at": 0, "error": ""}
+            try:
+                data = _aes_cbc_decrypt_cli(
+                    open(path, encoding="utf-8").read(), machine_key)
+                token = str(data.get("access_token") or data.get("token") or "")
+                item["readable"] = True
+                item["valid"] = token.startswith(("dt-", "jt-", "pt-"))
+                item["uid"] = str(data.get("uid") or "")
+                item["nickname"] = str(data.get("name") or "")
+                exp = data.get("expire_time") or data.get("expires_at") or 0
+                try:
+                    exp = int(exp)
+                    if exp > 10_000_000_000:
+                        exp //= 1000
+                except (TypeError, ValueError):
+                    exp = 0
+                item["expires_at"] = exp
+            except Exception as e:
+                item["error"] = str(e)[:160]
+            found.append(item)
+    return found
+
+
+def import_qoder_cli_credential(path: str, platform: str | None = None) -> dict:
+    """把一个 CLI 凭证文件导入 EchoBird 兼容存储（供账号接入页展示/使用）。"""
+    if not os.path.isfile(path):
+        raise EchoError("凭证文件不存在", "invalid")
+    target = platform or ""
+    if not target:
+        for p, auth_dir in _QODER_CLI_DIRS.items():
+            if os.path.abspath(path).startswith(os.path.abspath(auth_dir)):
+                target = p
+                break
+    if target not in ("qoder", "qodercn"):
+        raise EchoError("无法判断凭证所属平台，请指定 platform", "invalid")
+    auth_dir = os.path.dirname(path)
+    machine_key = ""
+    try:
+        with open(os.path.join(auth_dir, "machine_id"), encoding="utf-8") as fh:
+            machine_key = fh.read().strip()
+    except Exception:
+        pass
+    data = _aes_cbc_decrypt_cli(open(path, encoding="utf-8").read(), machine_key)
+    token = str(data.get("access_token") or data.get("token") or "")
+    if not token:
+        raise EchoError("凭证中没有 access token", "invalid")
+    uid = str(data.get("uid") or "") or ("d-" + uuid.uuid4().hex[:24])
+    cfg = ECHO_PLATFORMS[target]
+    exp = data.get("expire_time") or data.get("expires_at") or 0
+    try:
+        exp = int(exp)
+        if exp > 10_000_000_000:
+            exp //= 1000
+    except (TypeError, ValueError):
+        exp = 0
+    exp_ms = exp * 1000 if exp else int(time.time() * 1000) + 30 * 86400_000
+    nickname = str(data.get("name") or "")
+    personal_token = str(data.get("personal_token") or "") if token.startswith("pt-") else ""
+    creds = {
+        "edition": target,
+        "access_token": token, "refresh_token": str(data.get("refresh_token") or ""),
+        "expires_at": exp_ms,
+        "user_id": uid, "name": nickname, "email": str(data.get("email") or ""),
+        "machine_id": machine_key or str(data.get("machine_id") or uuid.uuid4().hex),
+        "device_token": token if token.startswith("dt-") else "",
+        "device_refresh": str(data.get("refresh_token") or "") if token.startswith("dt-") else "",
+        "device_expires_at": exp_ms,
+        "device_chat": token.startswith("dt-"),
+        "personal_token": personal_token,
+    }
+    account_id = _sha256_hex(f"{cfg['tool']}\0{uid}")
+    account = {"id": account_id, "edition": target, "name": nickname or uid[:10],
+               "email": data.get("email") or None, "plan": None, "active": True,
+               "remaining": None, "total": None, "expiresAt": None}
+    _save_echo_account(target, account_id, account, creds)
+    return {"platform": target, "account_id": account_id,
+            "identity": nickname or uid[:10], "uid": uid}

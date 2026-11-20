@@ -865,12 +865,47 @@ async def _fetch_codex(api_key, provider) -> dict:
 
 # ------------------------------------------------------------------ 统一入口
 
+async def _fetch_qoder(api_key, provider) -> dict:
+    """Qoder / Qoder CN 额度（跨区探测 + 套餐名 + 共享额度归一）。
+
+    物化的 echo ApiKey：device_token 在 oauth_refresh 的凭据 blob 中。
+    """
+    from app.services import qoder_quota
+    platform = api_key.oauth_profile or "qoder"
+    blob = {}
+    if api_key.oauth_refresh:
+        try:
+            blob = json.loads(decrypt_value(api_key.oauth_refresh)) or {}
+        except Exception:
+            blob = {}
+    token = str(blob.get("device_token") or blob.get("access_token")
+                or (decrypt_value(api_key.key_value) if getattr(api_key, "key_value", "") else "") or "")
+    creds = {**blob, "device_token": token}
+    result = await qoder_quota.fetch_usage(creds, platform, timeout=TIMEOUT)
+    if result.get("login_required"):
+        raise QuotaError("登录已失效，请重新登录该账号", login_required=True)
+    if not result.get("windows"):
+        raise QuotaError(result.get("error") or "未获取到 Qoder 额度数据")
+    metrics = []
+    for w in result["windows"]:
+        metrics.append({"key": "quota", "label": w.get("name") or "Credits",
+                        "value": str(int(w["remaining"])) if w.get("remaining") is not None else "—",
+                        "percent": (_num(w["remaining"]) / _num(w["total"]) * 100
+                                    if w.get("total") and _num(w.get("total")) else None),
+                        "reset_at": w.get("expires_at"),
+                        "remaining": w.get("remaining"), "total": w.get("total")})
+    return {"plan": result.get("plan") or None, "subscription_end_at": None,
+            "identity": blob.get("email") or None, "metrics": metrics, "checkin": None}
+
+
 _QUOTA_FETCHERS = {
     "workbuddy": _fetch_workbuddy,
     "workbuddy-intl": _fetch_workbuddy,
     "zcode": _fetch_zcode,
     "claude": _fetch_claude,
     "codex": _fetch_codex,
+    "qoder": _fetch_qoder,
+    "qodercn": _fetch_qoder,
 }
 
 SUPPORTED_QUOTA_PLATFORMS = tuple(_QUOTA_FETCHERS)

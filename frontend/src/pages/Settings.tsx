@@ -6,6 +6,7 @@ import {
   getBackupConfig, updateBackupConfig, createBackup,
   listBackups, restoreLocalBackup, deleteBackup, downloadBackupUrl,
   checkAppUpdate, applyAppUpdate, getUpdateStatus,
+  getAutoStart, setAutoStart,
 } from "../services/api";
 import { toast } from "../stores/toast";
 import { cn } from "../lib/utils";
@@ -16,7 +17,7 @@ import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
-import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, MonitorCog, Github, CheckCircle2 } from "lucide-react";
+import { Palette, Database, Download, Upload, Trash2, Loader2, HardDrive, Clock, FolderOpen, RefreshCw, ShieldCheck, Sun, Moon, MonitorCog, Github, CheckCircle2, Power } from "lucide-react";
 
 /** Compact segmented control for mutually-exclusive small choices. */
 function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
@@ -161,6 +162,27 @@ export default function SettingsPage() {
     mutationFn: () => updateBackupConfig(configForm),
     onSuccess: () => { refetchConfig(); toast({ title: t("settings.configSaved"), variant: "success" }); },
     onError: () => toast({ title: t("settings.configSaveFailed"), variant: "destructive" }),
+  });
+
+  // 开机自启动：以系统启动目录中的脚本是否存在为真实状态，切换即时生效
+  const { data: autoStart, refetch: refetchAutoStart } = useQuery({
+    queryKey: ["autoStart"],
+    queryFn: () => getAutoStart().then((r) => r.data),
+  });
+  const autoStartMut = useMutation({
+    mutationFn: (enabled: boolean) => setAutoStart(enabled),
+    onSuccess: (res) => {
+      refetchAutoStart();
+      toast({
+        title: res.data?.enabled ? t("settings.autoStartOn") : t("settings.autoStartOff"),
+        variant: "success",
+      });
+    },
+    onError: (e: any) => toast({
+      title: t("settings.autoStartFailed"),
+      description: e?.response?.data?.detail || e?.message,
+      variant: "destructive",
+    }),
   });
 
   const createBackupMut = useMutation({
@@ -335,6 +357,31 @@ export default function SettingsPage() {
                 )}
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+      {/* Auto Start */}
+      <Card className="card-hover">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2"><Power className="h-4 w-4 text-success" aria-hidden="true" /><CardTitle className="text-base">{t("settings.autoStart")}</CardTitle></div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <Label className="text-sm">{t("settings.autoStartTitle")}</Label>
+              <p className="text-xs text-muted-foreground">{t("settings.autoStartDesc")}</p>
+              {autoStart && !autoStart.supported && (
+                <p className="text-xs text-amber-500">{t("settings.autoStartUnsupported")}</p>
+              )}
+              {autoStart?.enabled && (
+                <p className="text-[11px] font-mono text-muted-foreground break-all">{autoStart.script_path}</p>
+              )}
+            </div>
+            <Switch
+              checked={!!autoStart?.enabled}
+              disabled={!autoStart?.supported || autoStartMut.isPending}
+              onCheckedChange={(v) => autoStartMut.mutate(v)}
+            />
           </div>
         </CardContent>
       </Card>

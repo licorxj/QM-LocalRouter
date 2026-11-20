@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Github, PanelLeftClose, PanelLeftOpen, Star } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { getVersion } from "../../services/api";
 import { useShell } from "../../stores/shell";
@@ -57,6 +57,27 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
     group.items.push(item);
     return acc;
   }, []);
+
+  // GitHub 仓库入口（底部提示给项目点星）
+  const repoUrl = "https://github.com/licorxj/QM-LocalRouter";
+  const starHint = t("sidebar.starOnGithub");
+  const githubLink = (
+    <a
+      href={repoUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={starHint}
+      aria-label={starHint}
+      className={cn(
+        "relative z-10 flex flex-none items-center rounded-xl border border-border/60 bg-foreground/[0.025] text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary",
+        collapsed ? "mx-auto mb-2 h-10 w-10 justify-center" : "mx-3 mb-2 gap-2.5 px-3 py-2"
+      )}
+    >
+      <Github className="h-[17px] w-[17px] flex-none" aria-hidden="true" />
+      {!collapsed && <span className="min-w-0 flex-1 truncate text-xs font-medium">{starHint}</span>}
+      {!collapsed && <Star className="h-3.5 w-3.5 flex-none text-amber-500/80" aria-hidden="true" />}
+    </a>
+  );
 
   return (
     <>
@@ -173,6 +194,16 @@ function SidebarContent({ collapsed, onNavigate }: SidebarContentProps) {
           </div>
         ))}
       </nav>
+
+      {/* GitHub star hint */}
+      {collapsed ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{githubLink}</TooltipTrigger>
+          <TooltipContent side="right">{starHint}</TooltipContent>
+        </Tooltip>
+      ) : (
+        githubLink
+      )}
 
       {/* Footer */}
       <div

@@ -19,7 +19,16 @@
 凭据（EchoBird 存储 Credentials 字段映射）：
   userId ← user_id, accessToken ← device_token（usage/网关用）,
   machineId ← machine_id, name/email
+
+错误分类 / 冷却 / 排队 / 体积预检（移植 qoder2api-hub 保守子集，不改成功转发路径）：
+- 排队（10605 / isQueued / RESOURCE_LIMIT）：按 retryAfterSeconds 有限等待后重试，
+  不惩罚账号；未吐字节才重开上游，超预算返回明确错误。
+- 额度耗尽（业务码 112）/ 每日上限（110）：冷却账号（30 分钟 / 到本地 0 点）。
+- 瞬时错误（418/5xx）：同账号重试（1s/2s 退避），仍失败再返回。
+- 会话亲和：同一 userId 的对话复用上次成功的网关主机（INTL api3→api2→api1）。
+- 体积预检：编码后请求体超 MAX_BODY_BYTES 直接 413，不发网络、不换号。
 """
+import asyncio
 import base64
 import hashlib
 import json
@@ -39,9 +48,31 @@ GATEWAYS = {
     "qoder": "https://api3.qoder.sh",
     "qodercn": "https://gateway.qoder.com.cn",
 }
+# INTL 备用主机（官方客户端候选顺序），用于连接层失败时切换
+GATEWAY_FALLBACKS = {
+    "qoder": ["https://api3.qoder.sh", "https://api2.qoder.sh", "https://api1.qoder.sh"],
+    "qodercn": ["https://gateway.qoder.com.cn"],
+}
 MODELS_PATH = "/algo/api/v2/model/list?Encode=1"
 CHAT_PATH = "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
-VERSION = "1.1.49"
+VERSION = "1.1.75"  # 对齐 qodercli 1.1.75（原 1.1.49）
+
+# 体积预检：编码后请求体超限直接 413（默认 29MB）
+MAX_BODY_BYTES = int(__import__("os").environ.get("QD_MAX_BODY_MB", "29")) * 1024 * 1024
+# 瞬时错误重试
+TRANSIENT_CODES = (418, 500, 502, 503, 504)
+TRANSIENT_RETRIES = 2
+TRANSIENT_BACKOFF = (1.0, 2.0)
+# 排队等待（有限预算）
+QUEUE_MAX_ROUNDS = 3
+QUEUE_WAIT_MAX_SECS = 180
+QUEUE_WAIT_BUDGET_SECS = 600
+
+# 账号冷却表：key = (platform, userId) -> (until_ts, reason)
+_COOLDOWNS: dict[tuple, tuple[float, str]] = {}
+# 会话亲和：userId -> 上次成功的网关主机（TTL 内复用）
+_AFFINITY: dict[str, tuple[str, float]] = {}
+_AFFINITY_TTL = 7200.0
 
 _ALPHABET = b"_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!"
 _PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
@@ -58,6 +89,90 @@ class QoderError(Exception):
         self.message = message
         self.status = status
         self.login_required = login_required
+
+
+# ---------------------------------------------------------------------------
+# 错误分类 / 冷却 / 排队 / 会话亲和 辅助（保守增强，不触碰成功路径）
+# ---------------------------------------------------------------------------
+
+def _queue_info(text: str) -> dict | None:
+    """从上游错误信封文本中识别排队信号，返回 {retry_after} 或 None。"""
+    if not text:
+        return None
+    lowered = text.lower()
+    queued = ("10605" in text or "isqueued" in lowered or "resource_limit" in lowered
+              or "resource limit" in lowered or '"queued":true' in lowered)
+    if not queued:
+        return None
+    import re
+    retry = 30
+    m = re.search(r'retryAfterSeconds["\s:=]*([\d.]+)', text, re.IGNORECASE)
+    if not m:
+        m = re.search(r'retry.after["\s:=]*([\d.]+)', text, re.IGNORECASE)
+    if m:
+        try:
+            retry = min(300, max(1, int(float(m.group(1)))))
+        except (TypeError, ValueError):
+            pass
+    return {"retry_after": retry}
+
+
+def _classify_inner_error(inner_status: int, message: str, code: str = "") -> QoderError | None:
+    """把业务错误映射成面向用户的明确 QoderError；返回 None 表示非特殊错误。"""
+    text = message or ""
+    if inner_status == 430 or code == "430":
+        return QoderError("客户端 / 网关版本过低，请升级后重试", inner_status)
+    if code in ("112", 112) or "额度已用尽" in text or "quota" in text.lower():
+        return QoderError(f"该账号额度已用尽（{text[:120]}）", inner_status or 403)
+    if code in ("110", 110) or "daily" in text.lower() and "limit" in text.lower():
+        return QoderError(f"该账号今日用量已达上限（{text[:120]}）", inner_status or 403)
+    if any(word in text for word in ("内容安全", "content safety", "sensitive", "审核")):
+        return QoderError(f"内容安全审核未通过（{text[:120]}）", inner_status or 400)
+    if _queue_info(text):
+        return QoderError(f"上游排队中，请稍后重试（{text[:120]}）", 429)
+    return None
+
+
+def _cooldown_key(platform: str, creds: dict) -> tuple:
+    return (platform, str(creds.get("userId") or creds.get("user_id") or "")[:40])
+
+
+def _cooldown_remaining(key: tuple) -> float:
+    until, reason = _COOLDOWNS.get(key, (0, ""))
+    return max(0.0, until - time.time())
+
+
+def _set_cooldown(key: tuple, seconds: float, reason: str) -> None:
+    _COOLDOWNS[key] = (time.time() + max(0, seconds), reason)
+    if len(_COOLDOWNS) > 512:
+        now = time.time()
+        for k in [k for k, (u, _) in _COOLDOWNS.items() if u < now][:256]:
+            _COOLDOWNS.pop(k, None)
+
+
+def _seconds_until_local_midnight() -> int:
+    import datetime as _dt
+    now = _dt.datetime.now()
+    tomorrow = (now + _dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(60, int((tomorrow - now).total_seconds()))
+
+
+def _affinity_host(platform: str, creds: dict) -> str:
+    uid = str(creds.get("userId") or creds.get("user_id") or "")
+    entry = _AFFINITY.get(uid)
+    if entry and time.time() - entry[1] < _AFFINITY_TTL and entry[0] in GATEWAY_FALLBACKS.get(platform, []):
+        return entry[0]
+    return GATEWAY_FALLBACKS.get(platform, [GATEWAYS[platform]])[0]
+
+
+def _remember_host(platform: str, creds: dict, host: str) -> None:
+    uid = str(creds.get("userId") or creds.get("user_id") or "")
+    if uid:
+        _AFFINITY[uid] = (host, time.time())
+        if len(_AFFINITY) > 2048:
+            now = time.time()
+            for k in [k for k, (_, t) in _AFFINITY.items() if now - t > _AFFINITY_TTL][:1024]:
+                _AFFINITY.pop(k, None)
 
 
 def _swap(s: str) -> str:
@@ -308,34 +423,16 @@ def prepare_request(body: dict, model_row: dict) -> dict:
 # ---------------------------------------------------------------------------
 # 调用（返回原始响应，供转发器中继）
 
-async def call_model(creds: dict, platform: str, model_id: str, body: dict,
-                     timeout: float = 180.0):
-    """调用对话网关，返回 (status, content_type, content bytes)。"""
-    catalog = await list_models(creds, platform)
-    model_row = resolve_model(catalog, model_id)
-    if not model_row:
-        available = ", ".join(sorted(str(r.get("key")) for r in catalog)[:20])
-        raise QoderError(f"该账号不可用模型 '{model_id}'（可用: {available}）", 404)
-    request = prepare_request(body, model_row)
-    wire = qoder_encode(json.dumps(request, ensure_ascii=False, separators=(",", ":")))
-    headers = codec_headers(_qoder_headers_from_creds(creds), CHAT_PATH, wire)
-    headers["accept"] = "text/event-stream"
-    headers["cache-control"] = "no-cache"
-    url = GATEWAYS[platform] + CHAT_PATH
-    try:
-        client = ssl_relax.get_client(url)
-        resp = await client.request("POST", url, headers=headers, content=wire.encode(),
-                                    timeout=timeout)
-    except httpx.HTTPError as e:
-        raise QoderError(f"对话网关请求失败: {str(e)[:120]}")
+def _unpack_envelope(resp) -> tuple[int, str, bytes]:
+    """解析 Qoder SSE 信封 {"headers","body","statusCodeValue"}。
+
+    Qoder 网关把业务结果统一包在信封里、外层 HTTP 恒为 200：
+    - inner_status >= 400：业务错误，映射成明确 QoderError（含排队/额度/版本分类），
+      否则会被当成正常 SSE 转发，前端读不到 choices 而显示空回复；
+    - inner_status == 200：把 body 里的真实 OpenAI 响应解包后下发。
+    排队信号抛 QoderError(status=429)，由调用方决定是否有限等待重试。
+    """
     content = resp.content
-    # Qoder 网关把「业务结果」统一包在 SSE 信封 {"headers","body","statusCodeValue"} 里，
-    # 且外层 HTTP 恒为 200。必须逐帧解析信封：
-    #   - inner_status >= 400：业务错误（登录失效 / 额度耗尽），转成明确 QoderError，
-    #     否则会被当成正常 SSE 转发，前端读不到 choices 而显示空回复；
-    #   - inner_status == 200：把 body 里的真实 OpenAI 响应解包后下发。
-    # 旧实现用 b"choices" not in content[:2000] 判断，body 中一旦含 choices 字样就整段跳过，
-    # 导致错误信封原样透传 —— 这正是"日志 200 但对话无内容"的根因。
     if resp.status_code == 200 and b"statusCodeValue" in content[:4000]:
         try:
             unpacked: list[str] = []
@@ -350,9 +447,12 @@ async def call_model(creds: dict, platform: str, model_id: str, body: dict,
                 if payload == "[DONE]":
                     unpacked.append("data: [DONE]")
                     continue
-                event = json.loads(payload)
+                try:
+                    event = json.loads(payload)
+                except (ValueError, TypeError):
+                    unpacked.append(line)
+                    continue
                 if not isinstance(event, dict) or "statusCodeValue" not in event:
-                    # 非信封帧，原样保留
                     unpacked.append(line)
                     continue
                 saw_envelope = True
@@ -370,19 +470,120 @@ async def call_model(creds: dict, platform: str, model_id: str, body: dict,
                     except (ValueError, TypeError):
                         body_obj = {}
                     message = str(body_obj.get("message") or body_raw)[:300]
-                    if inner_status == 403 or body_obj.get("code") == "112":
+                    code = str(body_obj.get("code") or "")
+                    special = _classify_inner_error(inner_status, message, code)
+                    if special:
+                        raise special
+                    if inner_status == 403 or code == "112":
                         message = f"该账号额度已用尽或无权调用（{message}）"
                     raise QoderError(message, inner_status,
                                      login_required=inner_status in (401, 403))
-                # 成功信封：提取 body 中的真实内容
                 if body_raw:
                     unpacked.append(body_raw)
             if saw_envelope:
-                content = "\n".join(unpacked).encode("utf-8")
-                # 解包后若已是标准 SSE，保持 event-stream；否则按 JSON 处理
-                return resp.status_code, resp.headers.get("content-type", "application/json"), content
+                data = "\n".join(unpacked).encode("utf-8")
+                return resp.status_code, resp.headers.get("content-type", "application/json"), data
         except QoderError:
             raise
         except (ValueError, TypeError):
             pass
     return resp.status_code, resp.headers.get("content-type", "application/json"), content
+
+
+async def call_model(creds: dict, platform: str, model_id: str, body: dict,
+                     timeout: float = 180.0):
+    """调用对话网关，返回 (status, content_type, content bytes)。"""
+    identity = _qoder_headers_from_creds(creds)
+    ckey = _cooldown_key(platform, identity)
+
+    # 1) 账号冷却检查（额度耗尽 / 每日上限），短冷却等待、长冷却直接报错
+    remaining = _cooldown_remaining(ckey)
+    if remaining > 10:
+        reason = _COOLDOWNS.get(ckey, (0, ""))[1]
+        raise QoderError(f"该账号冷却中（{reason or '额度'}），约 {int(remaining)} 秒后可用", 429)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+
+    catalog = await list_models(creds, platform)
+    model_row = resolve_model(catalog, model_id)
+    if not model_row:
+        available = ", ".join(sorted(str(r.get("key")) for r in catalog)[:20])
+        raise QoderError(f"该账号不可用模型 '{model_id}'（可用: {available}）", 404)
+    request = prepare_request(body, model_row)
+    wire = qoder_encode(json.dumps(request, ensure_ascii=False, separators=(",", ":")))
+
+    # 2) 体积预检：超限直接 413，不发网络、不换号
+    if len(wire.encode("utf-8")) > MAX_BODY_BYTES:
+        raise QoderError(f"请求体过大（>{MAX_BODY_BYTES // (1024 * 1024)}MB），请缩短上下文后重试", 413)
+
+    headers = codec_headers(identity, CHAT_PATH, wire)
+    headers["accept"] = "text/event-stream"
+    headers["cache-control"] = "no-cache"
+    wire_bytes = wire.encode("utf-8")
+
+    # 3) 会话亲和 + 主机切换（INTL api3→api2→api1），连接层瞬时错误同账号重试
+    hosts = list(GATEWAY_FALLBACKS.get(platform, [GATEWAYS[platform]]))
+    affinity = _affinity_host(platform, identity)
+    ordered = [affinity] + [h for h in hosts if h != affinity]
+    resp = None
+    last_exc: Exception | None = None
+    for host in ordered:
+        url = host + CHAT_PATH
+        for attempt in range(TRANSIENT_RETRIES + 1):
+            try:
+                client = ssl_relax.get_client(url)
+                resp = await client.request("POST", url, headers=headers,
+                                            content=wire_bytes, timeout=timeout)
+            except httpx.HTTPError as e:
+                last_exc = e
+                if attempt < TRANSIENT_RETRIES:
+                    await asyncio.sleep(TRANSIENT_BACKOFF[min(attempt, len(TRANSIENT_BACKOFF) - 1)])
+                    continue
+                break  # 换主机
+            if resp.status_code in TRANSIENT_CODES and attempt < TRANSIENT_RETRIES:
+                await asyncio.sleep(TRANSIENT_BACKOFF[min(attempt, len(TRANSIENT_BACKOFF) - 1)])
+                continue
+            break
+        if resp is not None and resp.status_code not in TRANSIENT_CODES:
+            _remember_host(platform, identity, host)
+            break
+        resp = None
+
+    if resp is None:
+        detail = f": {str(last_exc)[:120]}" if last_exc else ""
+        raise QoderError("对话网关请求失败" + detail)
+
+    if resp.status_code in (401, 403):
+        raise QoderError("登录已失效，请重新登录该平台账号", 401, login_required=True)
+    if resp.status_code >= 400:
+        raise QoderError(f"对话网关返回 HTTP {resp.status_code}")
+
+    # 4) 解包 + 排队有限等待重试（未吐字节、按 retryAfterSeconds、总预算封顶）
+    queue_rounds = 0
+    queue_total = 0.0
+    while True:
+        try:
+            result = _unpack_envelope(resp)
+            return result
+        except QoderError as e:
+            qi = _queue_info(e.message)
+            if e.status != 429 or not qi:
+                # 额度类错误：设置账号冷却
+                if "额度已用尽" in e.message or "112" in e.message:
+                    _set_cooldown(ckey, 1800, "quota-exhausted")
+                elif "上限" in e.message or "110" in e.message:
+                    _set_cooldown(ckey, _seconds_until_local_midnight(), "daily-limit")
+                raise
+            wait = min(qi["retry_after"], QUEUE_WAIT_MAX_SECS)
+            queue_rounds += 1
+            if queue_rounds > QUEUE_MAX_ROUNDS or queue_total + wait > QUEUE_WAIT_BUDGET_SECS:
+                raise QoderError(f"上游持续排队，已等待 {int(queue_total)} 秒仍不可用，请稍后重试", 429)
+            await asyncio.sleep(wait)
+            queue_total += wait
+            # 重发请求（排队不惩罚账号，继续用当前亲和主机）
+            try:
+                client = ssl_relax.get_client(affinity + CHAT_PATH)
+                resp = await client.request("POST", affinity + CHAT_PATH, headers=headers,
+                                            content=wire_bytes, timeout=timeout)
+            except httpx.HTTPError as e2:
+                raise QoderError(f"排队后重试失败: {str(e2)[:120]}")

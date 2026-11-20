@@ -21,6 +21,12 @@ from app.utils import ssl_relax
 from app.utils.crypto import decrypt_value
 
 CAMPAIGNS_PATH = "/sash/api/v1/me/campaigns"
+# qoder2api-hub 逆向出的专用端点（与 CAMPAIGNS_PATH 的每日 100 活动并行）：
+# daily-check-in 是另一套连续签到，pro-upgrade 是一次性 Pro 福利包。
+CHECKIN_STATUS_PATH = "/sash/api/v1/me/daily-check-in/status"
+CHECKIN_CLAIM_PATH = "/sash/api/v1/me/daily-check-in/claim"
+PRO_ELIGIBILITY_PATH = "/sash/api/v1/me/pro-upgrade/eligibility"
+PRO_CLAIM_PATH = "/sash/api/v1/me/pro-upgrade/claim"
 BASE_URLS = {
     "qoder": "https://openapi.qoder.sh",
     "qodercn": "https://openapi.qoder.com.cn",
@@ -284,10 +290,151 @@ async def status_with_creds(creds: dict, platform: str) -> dict | None:
     }
 
 
+async def _sash_get(creds: dict, platform: str, path: str) -> dict | None:
+    """GET sash 端点；接口不存在（404/405/410）返回 None，供调用方优雅降级。"""
+    if platform not in BASE_URLS or not creds.get("device_token"):
+        return None
+    url = BASE_URLS[platform] + path
+    try:
+        client = ssl_relax.get_client(url)
+        resp = await client.get(url, headers=_campaign_headers(creds), timeout=15)
+    except httpx.HTTPError:
+        return None
+    if resp.status_code in (404, 405, 410):
+        return None
+    if resp.status_code in (401, 403):
+        raise CampaignError("登录已失效，请重新登录该账号", login_required=True)
+    if not resp.is_success:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+async def checkin_status(creds: dict, platform: str) -> dict | None:
+    """连续签到（daily-check-in）状态。
+
+    返回 {"status","active","today_checked_in","reward_credits",...}；接口在该
+    区域不存在时返回 None（与 qoder2api-hub 一致：国际版多为 404，活动由官方
+    客户端承接）。
+    """
+    q = await _sash_get(creds, platform, CHECKIN_STATUS_PATH)
+    if not isinstance(q, dict):
+        return None
+    status = str(q.get("status") or "")
+    last = 0
+    try:
+        last = int(q.get("lastClaimedAt") or 0)
+    except (TypeError, ValueError):
+        pass
+    today = time.strftime("%Y-%m-%d", time.localtime(last)) if last else ""
+    return {
+        "status": status,
+        "active": status in ("CLAIMABLE", "CLAIMED"),
+        "today_checked_in": status == "CLAIMED" and today == time.strftime("%Y-%m-%d"),
+        "streak_days": int(q.get("currentStreakDays") or 0),
+        "total_claim_days": int(q.get("totalClaimDays") or 0),
+        "reward_credits": int(q.get("rewardCredits") or 0),
+        "next_claim_at": int(q.get("nextClaimAt") or 0),
+        "last_claimed_at": last,
+    }
+
+
+async def checkin_claim(creds: dict, platform: str) -> dict:
+    """连续签到领奖（幂等：409/ALREADY_CLAIMED 归一为已签）。"""
+    if platform not in BASE_URLS or not creds.get("device_token"):
+        raise CampaignError("凭据缺失，请重新登录该账号", login_required=True)
+    url = BASE_URLS[platform] + CHECKIN_CLAIM_PATH
+    try:
+        client = ssl_relax.get_client(url)
+        resp = await client.post(url, json={}, headers=_campaign_headers(creds), timeout=20)
+    except httpx.HTTPError as e:
+        raise CampaignError("网络请求失败: " + str(e)[:120])
+    body = ""
+    try:
+        body = resp.text[:200]
+    except Exception:
+        pass
+    if resp.status_code in (401, 403):
+        raise CampaignError("登录已失效，请重新登录该账号", login_required=True)
+    if "ALREADY_CLAIMED" in body or "ALREADY" in body:
+        return {"ok": True, "already": True, "amount": 0}
+    if not resp.is_success:
+        raise CampaignError(f"签到接口返回 HTTP {resp.status_code}")
+    try:
+        value = resp.json()
+    except ValueError:
+        return {"ok": True, "amount": 0}
+    if str(value.get("result") or "") == "ALREADY_CLAIMED":
+        return {"ok": True, "already": True, "amount": 0}
+    if value.get("success") is False:
+        raise CampaignError(str(value.get("error") or "签到失败")[:160])
+    amount = int(value.get("rewardCredits") or 0)
+    return {"ok": True, "amount": amount}
+
+
+async def pro_eligibility(creds: dict, platform: str) -> dict | None:
+    """Pro 福利包资格（一次性 +1800）；接口不存在返回 None。"""
+    q = await _sash_get(creds, platform, PRO_ELIGIBILITY_PATH)
+    return q if isinstance(q, dict) else None
+
+
+async def pro_claim(creds: dict, platform: str) -> dict:
+    """领取 Pro 福利包（幂等：409/ALREADY 归一为已领）。"""
+    if platform not in BASE_URLS or not creds.get("device_token"):
+        raise CampaignError("凭据缺失，请重新登录该账号", login_required=True)
+    url = BASE_URLS[platform] + PRO_CLAIM_PATH
+    try:
+        client = ssl_relax.get_client(url)
+        resp = await client.post(url, json={}, headers=_campaign_headers(creds), timeout=20)
+    except httpx.HTTPError as e:
+        raise CampaignError("网络请求失败: " + str(e)[:120])
+    body = ""
+    try:
+        body = resp.text[:200]
+    except Exception:
+        pass
+    if resp.status_code in (401, 403):
+        raise CampaignError("登录已失效，请重新登录该账号", login_required=True)
+    if "ALREADY" in body:
+        return {"ok": True, "already": True, "amount": 0}
+    if resp.status_code in (404, 405, 410):
+        # 该账号/区域无 Pro 福利活动端点（参考仓库：多数账号 404），视为暂无福利
+        return {"ok": True, "already": True, "amount": 0, "no_offer": True}
+    if not resp.is_success:
+        raise CampaignError(f"Pro 福利领取返回 HTTP {resp.status_code}")
+    try:
+        value = resp.json()
+    except ValueError:
+        return {"ok": True, "amount": 0}
+    return {"ok": True, "amount": int(value.get("credits") or value.get("amount") or 1800)}
+
+
+def _log_activity(creds: dict, platform: str, kind: str, ok: bool,
+                  detail: str = "", amount: int = 0) -> None:
+    """写签到流水（异常静默），uid 只留前 8 位。"""
+    try:
+        from app.services import qoder_activity
+        qoder_activity.record(kind=kind, ok=ok, uid=str(creds.get("user_id") or ""),
+                              nickname=str(creds.get("name") or ""), realm=platform,
+                              detail=detail, amount=amount)
+    except Exception:
+        pass
+
+
 async def claim_daily(api_key, provider) -> dict:
-    """ApiKey 单账号签到入口。"""
+    """ApiKey 单账号签到入口（campaigns 每日 100）。"""
     platform = str(getattr(api_key, "oauth_profile", "") or "")
-    return await claim_with_creds(_creds_from_api_key(api_key), platform)
+    creds = _creds_from_api_key(api_key)
+    try:
+        result = await claim_with_creds(creds, platform)
+    except CampaignError as e:
+        _log_activity(creds, platform, "daily_claim", False, e.message)
+        raise
+    _log_activity(creds, platform, "daily_claim", True,
+                  "already" if result.get("already") else "claimed")
+    return result
 
 
 async def fetch_status(api_key) -> dict | None:

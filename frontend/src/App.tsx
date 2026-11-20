@@ -1,5 +1,6 @@
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Route } from "react-router-dom";
+import CachedRoutes from "./components/layout/CachedRoutes";
 import Sidebar from "./components/layout/Sidebar";
 import Topbar from "./components/layout/Topbar";
 import { Toaster } from "./components/ui/toaster";
@@ -14,6 +15,7 @@ import ForwardingPage from "./pages/Forwarding";
 import Endpoints from "./pages/Endpoints";
 import Chat from "./pages/Chat";
 import Monitor from "./pages/Monitor";
+import ScriptPlugins from "./pages/ScriptPlugins";
 
 export default function App() {
   return (
@@ -23,7 +25,7 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
           <main className="main-canvas min-h-0 flex-1 overflow-y-auto p-6 lg:p-8">
-            <Routes>
+            <CachedRoutes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/accounts" element={<Accounts />} />
@@ -31,10 +33,11 @@ export default function App() {
               <Route path="/strategies" element={<Strategies />} />
               <Route path="/logs" element={<Logs />} />
               <Route path="/monitor" element={<Monitor />} />
+              <Route path="/script-plugins" element={<ScriptPlugins />} />
               <Route path="/endpoints" element={<Endpoints />} />
               <Route path="/forwarding" element={<ForwardingPage />} />
               <Route path="/settings" element={<SettingsPage />} />
-            </Routes>
+            </CachedRoutes>
           </main>
         </div>
         <Toaster />

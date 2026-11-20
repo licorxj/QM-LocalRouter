@@ -11,6 +11,8 @@ cryptography==43.0.0
 python-dotenv==1.0.1
 # Form/UploadFile 支持（backup /restore 等接口必需；缺失会导致打包版启动即崩）
 python-multipart==0.0.29
+# psutil - 服务型插件（apiserver）检测/释放占用端口、管理常驻进程；打包版必需
+psutil==7.2.2
 # LiteLLM - LLM 路由转发内核
 litellm>=1.0.0
 # 桌面外壳（launcher_desktop.py，仅 Windows 冻结包使用；Linux/Docker 会自动跳过其 Win32 依赖）

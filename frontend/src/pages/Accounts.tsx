@@ -3,11 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getAccounts, getAccountPlatforms, startAccountLogin, refreshAccount, claimAccount,
   deleteKey, getOauthStatus, syncModelGroups, claimAllAccounts,
-  getZcodeClaimStatus, claimZcode,
   getPluginLoginStatus, cancelPluginLogin, refreshPluginAccount, claimPluginAccount, deletePluginAccount,
   getEchoLoginStatus, cancelEchoLogin, refreshEchoAccount, claimEchoAccount, deleteEchoAccount,
   getPlugins, checkPluginUpdates, installPlugin, getPluginTask, enablePlugin, disablePlugin, uninstallPlugin,
   updatePluginSettings,
+  getScriptPlugins, runScriptPlugin,
 } from "../services/api";
 import { useI18n } from "../i18n";
 import { toast } from "../stores/toast";
@@ -68,15 +68,9 @@ type PlatformEntry = {
   quota: boolean; claim: boolean; icon: string; note: string; login_ready: boolean; account_count: number;
   plugin_id?: string;
 };
-type ZcodeClaimStatus = {
-  installed: boolean; exe_path: string | null; source: string;
-  node_available: boolean; node_version: string; node_ok: boolean;
-  script_available: boolean; launch_hint: string;
-  debug_port: number; debug_port_open: boolean;
-};
 type ClaimGroup = {
   key: string; label: string; platform: string;
-  cards: AccountCard[]; kind: "native" | "zcode";
+  cards: AccountCard[]; kind: "native" | "zcode" | "qoder";
 };
 type PluginEntry = {
   id: string; name: string; display_name: string; description?: string;
@@ -180,26 +174,64 @@ export default function Accounts() {
   });
   const accounts: AccountCard[] = accountsData?.accounts || [];
 
+  // 按平台汇总账号积分（套餐积分 + 奖励积分的剩余值）
+  const platformPoints = useMemo(() => {
+    const map = new Map<string, { label: string; total: number }>();
+    for (const acc of accounts) {
+      const metrics: Metric[] = acc.quota?.metrics || [];
+      let sum = 0;
+      for (const m of metrics) {
+        if ((m.key === "base" || m.key === "reward") && typeof m.remaining === "number" && Number.isFinite(m.remaining)) {
+          sum += m.remaining;
+        }
+      }
+      if (sum > 0) {
+        const label = acc.platform_label || acc.platform;
+        const prev = map.get(acc.platform) || { label, total: 0 };
+        prev.total += sum;
+        map.set(acc.platform, prev);
+      }
+    }
+    return Array.from(map.values()).map((v) => ({
+      ...v,
+      display: v.total.toLocaleString(zh ? "zh-CN" : "en-US", { maximumFractionDigits: 2 }),
+    }));
+  }, [accounts, zh]);
+
   const { data: platformsData } = useQuery({
     queryKey: ["accountPlatforms"],
     queryFn: () => getAccountPlatforms().then((r) => r.data),
   });
   const platforms: PlatformEntry[] = platformsData?.platforms || [];
 
-  // ZCode 本地签到前置状态（安装 / Node 运行时），无权限或无客户端时置灰
-  const { data: zcodeStatus } = useQuery({
-    queryKey: ["zcodeClaimStatus"],
-    queryFn: () => getZcodeClaimStatus().then((r) => r.data as ZcodeClaimStatus),
-    staleTime: 60_000,
+  // ZCode 领卡已改为脚本插件（纯 HTTP 协议，无需本地 exe/CDP）
+  // 唯一门槛：zcode-claim 插件已安装且启用
+  const scriptPluginsQ = useQuery({
+    queryKey: ["scriptPlugins"],
+    queryFn: () => getScriptPlugins().then((r) => r.data),
+    staleTime: 30_000,
   });
-  // zcode 状态：仅「未安装 / Node 不足」为硬阻塞；调试端口未开会由后端在签到时自动拉起
-  const zcodeState = useMemo<"ready" | "not_installed" | "node" | "debug_port">(() => {
-    if (!zcodeStatus || !zcodeStatus.installed) return "not_installed";
-    if (!zcodeStatus.node_ok || !zcodeStatus.script_available) return "node";
-    if (!zcodeStatus.debug_port_open) return "debug_port";
+  const zcodePlugin = useMemo(
+    () => (scriptPluginsQ.data?.installed || []).find((p: any) => p.id === "zcode-claim"),
+    [scriptPluginsQ.data]
+  );
+  const zcodeState = useMemo<"ready" | "plugin_missing" | "plugin_disabled">(() => {
+    if (!zcodePlugin) return "plugin_missing";
+    if (zcodePlugin.enabled === false) return "plugin_disabled";
     return "ready";
-  }, [zcodeStatus]);
-  const zcodeReady = zcodeState === "ready" || zcodeState === "debug_port";
+  }, [zcodePlugin]);
+  const zcodeReady = zcodeState === "ready";
+  const qoderPlugin = useMemo(
+    () => (scriptPluginsQ.data?.installed || []).find((p: any) => p.id === "qoder-claim"),
+    [scriptPluginsQ.data]
+  );
+  const qoderState = useMemo<"ready" | "plugin_missing" | "plugin_disabled">(() => {
+    if (!qoderPlugin) return "plugin_missing";
+    if (qoderPlugin.enabled === false) return "plugin_disabled";
+    return "ready";
+  }, [qoderPlugin]);
+  const qoderReady = qoderState === "ready";
+  const isQoderCard = (card: AccountCard) => card.platform === "qoder" || card.platform === "qodercn";
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -377,14 +409,32 @@ export default function Accounts() {
   });
 
   const zcodeClaimMut = useMutation({
-    mutationFn: (keyId?: number) => claimZcode(keyId),
-    onSuccess: (res) => {
-      const d = res.data || {};
+    // 走 zcode-claim 脚本插件（纯 HTTP 领卡），不再用本地 exe/CDP 路由
+    mutationFn: async (keyId?: number) => {
+      const res = await runScriptPlugin("zcode-claim", {
+        action: "claim",
+        ...(keyId != null ? { key_id: keyId } : {}),
+      });
+      const run = res.data || {};
+      const result = run.result || {};
+      const claimed = Number(result.claimed || 0);
+      const already = Number(result.already || 0);
+      const needVerify = Number(result.need_verification || 0);
+      const report = result.report || "";
+      const failed = !run.ok || (result.result === "NO_ACCOUNT" || result.result === "NO_PERMISSION");
+      const account = result.results?.[0]?.account || "";
+      return {
+        ok: !failed && (claimed > 0 || already > 0),
+        account,
+        key_id: keyId,
+        message: report || run.error || result.report || "",
+        status: failed ? "error" : (needVerify > 0 ? "captcha" : (claimed > 0 || already > 0 ? "ok" : "no_delivery")),
+      };
+    },
+    onSuccess: (d) => {
       invalidate();
-      qc.invalidateQueries({ queryKey: ["zcodeClaimStatus"] });
       const who = d.account ? `（${d.account}）` : "";
       if (d.ok) {
-        // 只标记本次实际签到的账号，不再把全部 zcode 账号误标为已签
         if (d.key_id != null) markClaimed([d.key_id]);
         toast({ title: `${t("accounts.zcodeClaimDone")}${who}`, description: d.message, variant: "success" });
       } else {
@@ -394,6 +444,40 @@ export default function Accounts() {
       }
     },
     onError: (e: any) => toast({ title: t("accounts.zcodeClaimFailed"),
+      description: e?.response?.data?.detail, variant: "destructive" }),
+  });
+
+  // Qoder / Qoder CN：走 qoder-claim 插件（每日签到 + Pro 福利 + 签到流水）
+  const qoderClaimMut = useMutation({
+    mutationFn: async (card?: AccountCard) => {
+      const params: Record<string, any> = { action: "all" };
+      if (card) {
+        params.platform = card.platform;
+        params.account_id = card.account_id || (typeof card.id === "string" ? card.id.split(":").pop() : "");
+      }
+      const res = await runScriptPlugin("qoder-claim", params);
+      const run = res.data || {};
+      const result = run.result || {};
+      const okCount = Number(result.ok_count || 0);
+      const already = Number(result.already_count || 0);
+      const failed = Number(result.failed_count || 0);
+      const report = result.report || "";
+      const hardFail = !run.ok || result.result === "NO_ACCOUNT" || result.result === "NO_PERMISSION";
+      return {
+        ok: !hardFail && failed === 0 && (okCount + already) > 0,
+        soft: !hardFail && failed === 0 && okCount === 0 && already === 0,
+        account: card?.identity || "",
+        message: report || run.error || result.report || "",
+      };
+    },
+    onSuccess: (d, card) => {
+      invalidate();
+      if (card) markClaimed([card.id]);
+      if (d.ok) toast({ title: t("accounts.qoderClaimDone"), description: d.message, variant: "success" });
+      else if (d.soft) toast({ title: t("accounts.alreadyClaimed"), description: d.message, variant: "default" });
+      else toast({ title: t("accounts.qoderClaimFailed"), description: d.message, variant: "destructive" });
+    },
+    onError: (e: any) => toast({ title: t("accounts.qoderClaimFailed"),
       description: e?.response?.data?.detail, variant: "destructive" }),
   });
 
@@ -492,9 +576,10 @@ export default function Accounts() {
     [platforms]
   );
 
-  // --- 签到中心：可签到账号（按平台分组）；zcode 账号走本地脚本签到，也作为一组展示 ---
-  const claimableAccounts = useMemo(() => accounts.filter((a) => a.supports_claim), [accounts]);
+  // --- 签到中心：可签到账号（按平台分组）；zcode / qoder 账号走脚本插件签到，也作为一组展示 ---
+  const claimableAccounts = useMemo(() => accounts.filter((a) => a.supports_claim && !isQoderCard(a)), [accounts]);
   const zcodeAccounts = useMemo(() => accounts.filter((a) => a.platform === "zcode"), [accounts]);
+  const qoderAccounts = useMemo(() => accounts.filter((a) => isQoderCard(a) && a.supports_claim), [accounts]);
   const claimGroups = useMemo<ClaimGroup[]>(() => {
     const groups: ClaimGroup[] = [];
     const map = new Map<string, AccountCard[]>();
@@ -512,7 +597,7 @@ export default function Accounts() {
         kind: "native",
       });
     }
-    // zcode：即使未安装也展示账号分组（组内置灰 + 提示），每个账号单独触发本地脚本
+    // zcode：即使插件未装也展示账号分组（组内置灰 + 提示），由 zcode-claim 插件领卡
     if (zcodeAccounts.length) {
       groups.push({
         key: "zcode",
@@ -521,7 +606,7 @@ export default function Accounts() {
         cards: zcodeAccounts,
         kind: "zcode",
       });
-    } else if (zcodeStatus) {
+    } else if (zcodePlugin) {
       // 没有已接入的 zcode 账号时仍保留一个平台级入口
       groups.push({
         key: "zcode",
@@ -531,8 +616,22 @@ export default function Accounts() {
         kind: "zcode",
       });
     }
+    // qoder / qodercn：插件未装也展示分组（组内置灰 + 提示），由 qoder-claim 插件签到 + 领 Pro 福利
+    if (qoderAccounts.length) {
+      for (const platform of ["qoder", "qodercn"]) {
+        const cards = qoderAccounts.filter((a) => a.platform === platform);
+        if (!cards.length) continue
+        groups.push({
+          key: `qoder_group_${platform}`,
+          platform,
+          label: cards[0].platform_label || platform,
+          cards,
+          kind: "qoder",
+        });
+      }
+    }
     return groups;
-  }, [claimableAccounts, zcodeAccounts, zcodeStatus, t]);
+  }, [claimableAccounts, zcodeAccounts, qoderAccounts, zcodePlugin, t]);
   const signedToday = (acc: AccountCard): boolean => {
     if (locallyClaimed[String(acc.id)]) return true;
     const today = new Date().toDateString();
@@ -580,6 +679,19 @@ export default function Accounts() {
           }
         />
 
+        {platformPoints.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="font-medium text-muted-foreground">{t("accounts.platformPoints")}</span>
+            {platformPoints.map((p) => (
+              <Badge key={p.label} variant="outline" className="gap-1.5 font-normal">
+                <PlatformIcon platform={p.label} className="h-3.5 w-3.5 rounded-sm" />
+                <span>{p.label}</span>
+                <span className="font-mono font-semibold text-foreground">{p.display}</span>
+              </Badge>
+            ))}
+          </div>
+        )}
+
         {isLoading ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {[0, 1].map((i) => <div key={i} className="h-44 animate-pulse rounded-xl bg-foreground/5" />)}
@@ -623,13 +735,24 @@ export default function Accounts() {
                               : <Gift className="h-3.5 w-3.5" />}
                           </Button>
                         )}
+                        {isQoderCard(acc) && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-success"
+                            aria-label={t("accounts.claim")}
+                            title={qoderReady ? t("accounts.qoderCardClaimTitle") : t("accounts.qoderPluginRequired")}
+                            onClick={() => qoderClaimMut.mutate(acc)}
+                            disabled={!qoderReady || qoderClaimMut.isPending}>
+                            {qoderClaimMut.isPending && qoderClaimMut.variables?.id === acc.id
+                              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                              : <Gift className="h-3.5 w-3.5" />}
+                          </Button>
+                        )}
                         {acc.supports_quota && (
                           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={t("accounts.refresh")}
                             onClick={() => refreshMut.mutate(acc)} disabled={refreshMut.isPending}>
                             <RefreshCw className={"h-3.5 w-3.5" + (refreshMut.isPending && refreshMut.variables?.id === acc.id ? " animate-spin" : "")} />
                           </Button>
                         )}
-                        {acc.supports_claim && (
+                        {acc.supports_claim && !isQoderCard(acc) && acc.platform !== "zcode" && (
                           <Button variant="ghost" size="icon" className="h-7 w-7 text-success" aria-label={t("accounts.claim")}
                             onClick={() => claimMut.mutate(acc)} disabled={claimMut.isPending} title={t("accounts.claim")}>
                             <Gift className="h-3.5 w-3.5" />
@@ -837,7 +960,14 @@ export default function Accounts() {
                 {claimGroups.map((group) => {
                   const expanded = !!expandedGroups[group.key];
                   const isZcode = group.kind === "zcode";
-                  const zcodeBlocked = isZcode && !zcodeReady;
+                  const isQoder = group.kind === "qoder";
+                  const pluginKind = isZcode ? "zcode" : (isQoder ? "qoder" : null);
+                  const pluginState = isZcode ? zcodeState : qoderState;
+                  const pluginReady = isZcode ? zcodeReady : qoderReady;
+                  const pluginBlocked = !!pluginKind && !pluginReady;
+                  const pluginMut = isZcode ? zcodeClaimMut : qoderClaimMut;
+                  const pluginPending = !!pluginMut.isPending;
+                  const pluginId = isZcode ? "zcode-claim" : "qoder-claim";
                   const Icon = expanded ? ChevronDown : ChevronRight;
                   return (
                     <div key={group.key} className="overflow-hidden rounded-lg border">
@@ -848,21 +978,22 @@ export default function Accounts() {
                           <Icon className="h-3.5 w-3.5 flex-none text-muted-foreground" />
                           <PlatformIcon platform={group.platform} identity={group.label} className="h-5 w-5 flex-none rounded object-contain" />
                           <p className="min-w-0 flex-1 truncate text-xs font-semibold">{group.label}</p>
-                          {isZcode && (
-                            <Badge variant={zcodeReady ? "success" : "secondary"} className="shrink-0 text-[10px]">
-                              {zcodeState === "ready" ? t("accounts.zcodeInstalled")
-                                : zcodeState === "not_installed" ? t("accounts.zcodeNotInstalled")
-                                  : zcodeState === "debug_port" ? t("accounts.zcodeAutoStart")
-                                    : t("accounts.zcodeNodeOutdated")}
+                          {pluginKind && (
+                            <Badge variant={pluginReady ? "success" : "secondary"} className="shrink-0 text-[10px]">
+                              {pluginState === "ready"
+                                ? (zh ? "插件就绪" : "Plugin ready")
+                                : pluginState === "plugin_disabled"
+                                  ? (zh ? "插件已停用" : "Plugin disabled")
+                                  : (zh ? "需安装插件" : "Plugin required")}
                             </Badge>
                           )}
                         </button>
                         <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 text-success"
                           aria-label={t("accounts.claimPlatform", { platform: group.label })}
                           title={t("accounts.claimPlatform", { platform: group.label })}
-                          onClick={() => claimAllMut.mutate(group.platform)}
-                          disabled={(isZcode && !zcodeReady) || claimAllMut.isPending}>
-                          {claimAllMut.isPending && claimAllMut.variables === group.platform
+                          onClick={() => pluginKind ? pluginMut.mutate() : claimAllMut.mutate(group.platform)}
+                          disabled={pluginKind ? (pluginBlocked || pluginPending) : claimAllMut.isPending}>
+                          {(pluginKind ? pluginPending : (claimAllMut.isPending && claimAllMut.variables === group.platform))
                             ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                             : <Gift className="h-3.5 w-3.5" />}
                         </Button>
@@ -871,31 +1002,37 @@ export default function Accounts() {
                       {/* 分组内容（展开后显示） */}
                       {expanded && (
                         <div className="space-y-1 border-t px-2 py-2">
-                          {isZcode && (
+                          {pluginKind && (
                             <div className="px-0.5 pb-1">
                               <p className="text-[10px] text-muted-foreground">
-                                {zcodeState === "ready"
-                                  ? (zcodeStatus?.exe_path || t("accounts.zcodeClaimHint"))
-                                  : zcodeState === "not_installed" ? t("accounts.zcodeInstallHint")
-                                    : zcodeState === "debug_port" ? t("accounts.zcodeAutoStartHint")
-                                      : `Node.js ${zcodeStatus.node_version || "—"} · >= 22 · ${t("accounts.zcodeNodeOutdated")}`}
+                                {isZcode
+                                  ? (pluginState === "ready"
+                                      ? (zh ? "由 zcode-claim 插件通过 HTTP 领取免费卡，无需启动本地客户端。" : "Free cards are claimed over HTTP by the zcode-claim plugin; no local client needed.")
+                                      : pluginState === "plugin_disabled"
+                                        ? (zh ? "zcode-claim 插件已停用，请在「脚本插件」中启用。" : "zcode-claim plugin is disabled. Enable it in Script Plugins.")
+                                        : (zh ? "请先安装并启用 zcode-claim 脚本插件后再领卡。" : "Install and enable the zcode-claim script plugin before claiming."))
+                                  : (pluginState === "ready"
+                                      ? (zh ? "由 qoder-claim 插件每日签到并领取 Pro 福利，签到流水可在插件执行记录中查看。" : "Daily check-in and Pro benefit are handled by the qoder-claim plugin; see its run log for the activity trail.")
+                                      : pluginState === "plugin_disabled"
+                                        ? (zh ? "qoder-claim 插件已停用，请在「脚本插件」中启用。" : "qoder-claim plugin is disabled. Enable it in Script Plugins.")
+                                        : (zh ? "请先安装并启用 qoder-claim 脚本插件后再签到。" : "Install and enable the qoder-claim script plugin before checking in."))}
                               </p>
                             </div>
                           )}
                           {group.cards.length === 0 ? (
                             <Button variant="outline" size="sm" className="w-full gap-1.5 text-[11px]"
-                              onClick={() => zcodeClaimMut.mutate()} disabled={zcodeBlocked || zcodeClaimMut.isPending}>
-                              {zcodeClaimMut.isPending ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Gift className="h-3 w-3" />}
+                              onClick={() => pluginMut.mutate()} disabled={pluginBlocked || pluginPending}>
+                              {pluginPending ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Gift className="h-3 w-3" />}
                               {t("accounts.claimNow")}
                             </Button>
                           ) : group.cards.map((acc) => {
                             const done = signedToday(acc);
                             const nativePending = claimMut.isPending && claimMut.variables?.id === acc.id;
-                            const pending = isZcode
-                              ? (zcodeClaimMut.isPending && zcodeClaimMut.variables === acc.id)
+                            const pending = pluginKind
+                              ? (pluginMut.isPending && (pluginMut.variables === acc.id || pluginMut.variables?.id === acc.id))
                               : nativePending;
-                            const disabled = isZcode
-                              ? (zcodeBlocked || zcodeClaimMut.isPending)
+                            const disabled = pluginKind
+                              ? (pluginBlocked || pluginPending)
                               : (done || claimMut.isPending);
                             return (
                               <div key={String(acc.id)} className="flex items-center gap-2.5 rounded-lg border px-2.5 py-2">
@@ -909,11 +1046,13 @@ export default function Accounts() {
                                   </Badge>
                                 )}
                                 <Button variant="outline" size="sm" className="h-7 shrink-0 gap-1 px-2 text-[11px]"
-                                  onClick={() => isZcode ? zcodeClaimMut.mutate(acc.id) : claimMut.mutate(acc)}
-                                  disabled={disabled} title={zcodeBlocked ? (
-                                    zcodeState === "not_installed" ? t("accounts.zcodeNotInstalled")
-                                      : zcodeState === "debug_port" ? t("accounts.zcodeDebugRequired")
-                                        : t("accounts.zcodeNodeOutdated")
+                                  onClick={() => pluginKind
+                                    ? (isZcode ? pluginMut.mutate(acc.id as number) : pluginMut.mutate(acc))
+                                    : claimMut.mutate(acc)}
+                                  disabled={disabled} title={pluginBlocked ? (
+                                    pluginState === "plugin_disabled"
+                                      ? (zh ? `${pluginId} 插件已停用` : `${pluginId} plugin disabled`)
+                                      : (zh ? `请先安装 ${pluginId} 插件` : `Install the ${pluginId} plugin first`)
                                   ) : undefined}>
                                   {pending ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Gift className="h-3 w-3" />}
                                   {t("accounts.claimNow")}

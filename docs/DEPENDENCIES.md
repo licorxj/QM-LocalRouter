@@ -28,6 +28,10 @@ Source: `backend/requirements.txt`
 | **httpx** | 0.27.0 | Async HTTP client for upstream API forwarding |
 | **cryptography** | 43.0.0 | Fernet symmetric encryption for API keys |
 | **python-dotenv** | 1.0.1 | .env file loading |
+| **python-multipart** | 0.0.29 | Form/UploadFile support (backup/restore endpoints) |
+| **litellm** | >=1.0.0 | LLM routing / forwarding kernel (lazy provider loading) |
+| **pywebview** | 6.2.1 | Desktop shell native webview (Windows frozen build; skipped on Linux/Docker) |
+| **psutil** | 7.2.2 | Service-type plugins (apiserver): detect/terminate processes holding a port; bundled into frozen builds |
 
 ### Backend Dev / Runtime Dependencies
 
@@ -95,7 +99,8 @@ LocalRouter
 │   ├── sqlalchemy[asyncio] ─── aiosqlite
 │   │   └── alembic ─── schema migrations (sync sqlite engine, same app.db)
 │   ├── httpx ─── HTTP forwarding
-│   └── cryptography ─── Fernet encryption
+│   ├── cryptography ─── Fernet encryption
+│   └── psutil ─── apiserver plugin port/process management
 │
 ├── Frontend (Node.js 18+)
 │   ├── react ─── react-dom ─── react-router-dom
@@ -125,3 +130,29 @@ detects the installation and runs the script through `POST /api/accounts/zcode/c
 - Requires ZCode launched with `--remote-debugging-port=9222` (see `start-debug.cmd` in the
   script directory); the script drives the client's native UI via CDP and sends no HTTP requests itself.
 - Bundled assets: `claim-now.mjs`, `README.md`, `start-debug.cmd`, `start-isolated.cmd`.
+
+---
+
+## Plugins — distributed on demand, NOT bundled with releases
+
+Script plugins and binary worker plugins are **not shipped in the GitHub source tree or Release
+assets**. This keeps release packages small and avoids distributing third-party binaries (e.g. the
+`opencode2api` gateway) through GitHub. Users download only the plugins they need at runtime.
+
+- **Distribution channel**: the app fetches the online catalog `index.json` from the COS release
+  bucket (`https://qmzf-release-1323480989.cos.ap-guangzhou.myqcloud.com/ApiRouteManeger/plugins/index.json`),
+  then downloads the selected plugin zip on demand. The catalog URL is defined by `CATALOG_URL` in
+  `backend/app/services/script_plugin_manager.py`.
+- **Release build flow** (`.github/workflows/build-release.yml`) stages only the backend executable,
+  `frontend/dist`, `release/run.*` and `.env.example`. It deliberately does **not** copy any
+  `data/plugins/` or `data/script_plugins/` content into the release zip / installer. Installed
+  plugin state (`installed.json`, `packages/`, `staging/`) is local runtime data, ignored by git and
+  never committed.
+- **Service-type plugins** (`type: "apiserver"`, e.g. `opencode2api-apiserver`) contain a compiled
+  gateway binary. One zip is published per OS/arch (`windows.x64`, `windows.arm64`, `linux.x64`,
+  `linux.arm64`, `macos.x64`, `macos.arm64`); the client automatically selects the entry matching its
+  platform. After install + enable, the gateway runs locally on `127.0.0.1:12005/v1` and is used by
+  the `opencode-free` provider channel.
+
+To add/update a plugin in the catalog, publish its zip and updated `index.json` to the COS release
+bucket — no GitHub Release change is required.

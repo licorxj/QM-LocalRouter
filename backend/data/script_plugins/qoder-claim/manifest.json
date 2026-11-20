@@ -1,0 +1,25 @@
+{
+  "id": "qoder-claim",
+  "name": "Qoder 签到与福利",
+  "description": "Qoder / Qoder CN 每日签到、Pro 福利领取与签到流水（进程内复用本项目已实现的 qoder_campaign/qoder_activity）。支持单账号与批量，账号来自 EchoBird 本地存储。安装并启用后，账号卡片上的签到按钮才会亮起。移植自 shuishuipingan/qoder2api-hub 的签到/福利机制（MIT）。",
+  "version": "1.0.0",
+  "entry": "main.py",
+  "function": "run",
+  "permissions": [],
+  "settings": [
+    {
+      "key": "action",
+      "type": "select",
+      "label": { "zh": "操作", "en": "Action" },
+      "description": { "zh": "claim=每日签到（默认）；pro=领取 Pro 福利；activity=查看签到流水；status=查看签到状态；all=签到+Pro福利。", "en": "claim=daily check-in (default); pro=claim Pro benefit; activity=check-in log; status=check-in status; all=check-in + Pro benefit." },
+      "options": [
+        { "value": "claim", "label": { "zh": "每日签到", "en": "Daily check-in" } },
+        { "value": "pro", "label": { "zh": "领取 Pro 福利", "en": "Claim Pro benefit" } },
+        { "value": "activity", "label": { "zh": "签到流水", "en": "Check-in log" } },
+        { "value": "status", "label": { "zh": "查询签到状态", "en": "Check-in status" } },
+        { "value": "all", "label": { "zh": "签到 + Pro 福利", "en": "Check-in + Pro" } }
+      ],
+      "default": "claim"
+    }
+  ]
+}

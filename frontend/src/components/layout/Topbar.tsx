@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Link2, Loader2, Menu, Moon, Play, Sun } from "lucide-react";
+import { Link2, Loader2, Menu, Moon, Play, RotateCw, Sun } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useTheme } from "../../providers/theme";
 import { useNavItems } from "./nav";
@@ -53,31 +53,42 @@ function LocaleToggle() {
 
 function HealthPill() {
   const { t } = useI18n();
-  const { running, starting, start, startError, dismissStartError } = useServiceHealth();
+  const { running, starting, restarting, start, restart, startError, dismissStartError } = useServiceHealth();
 
+  let status;
   if (running === null) {
-    return (
+    status = (
       <div className="flex h-9 items-center gap-2 rounded-full border border-border px-3 text-xs text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
         <span className="hidden sm:inline">{t("common.loading")}</span>
       </div>
     );
-  }
-
-  if (running) {
-    return (
+  } else if (running) {
+    status = (
       <div
-        className="flex h-9 items-center gap-2 rounded-full border border-border bg-success/8 px-3 text-xs font-medium text-success"
+        className="flex h-9 items-center gap-2 rounded-full border border-border bg-success/8 pl-3 pr-1 text-xs font-medium text-success"
         title={t("sidebar.serviceRunning")}
       >
         <StatusDot tone="success" />
         <span className="hidden sm:inline">{t("sidebar.serviceRunning")}</span>
+        <button
+          type="button"
+          onClick={restart}
+          disabled={restarting}
+          title={t("sidebar.restartService")}
+          aria-label={t("sidebar.restartService")}
+          className="ml-1 flex h-7 w-7 items-center justify-center rounded-full text-success/80 transition-colors hover:bg-success/15 hover:text-success disabled:opacity-60"
+        >
+          {restarting ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+        </button>
       </div>
     );
-  }
-
-  return (
-    <>
+  } else {
+    status = (
       <button
         type="button"
         onClick={start}
@@ -95,7 +106,12 @@ function HealthPill() {
         </span>
         {!starting && <Play className="h-3 w-3" aria-hidden="true" />}
       </button>
+    );
+  }
 
+  return (
+    <>
+      {status}
       <Dialog open={startError} onOpenChange={(o) => !o && dismissStartError()}>
         <DialogContent className="max-w-md">
           <DialogHeader>

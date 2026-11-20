@@ -36,6 +36,25 @@ async def cli_platforms():
 @router.post("/detect")
 async def cli_detect(data: dict):
     platform_id = str(data.get("platform", ""))
+    # Qoder 走 EchoBird 本地存储的 CLI 凭证扫描（AES-CBC），不走通用 json detect
+    if platform_id in ("qoder", "qodercn"):
+        from app.services import native_accounts as na
+        items = na.scan_qoder_cli_credentials()
+        candidates = []
+        for it in items:
+            if it.get("platform") != platform_id:
+                continue
+            label = it.get("nickname") or it.get("uid") or it.get("file") or "Qoder CLI"
+            fields = ["Qoder CLI（本机解密）"]
+            if it.get("valid") is False:
+                fields.append("令牌格式待确认")
+            candidates.append({
+                "path": it.get("path", ""),
+                "source": it.get("file") or "Qoder CLI 凭证",
+                "fields": fields,
+                "label": label,
+            })
+        return {"platform": platform_id, "candidates": candidates}
     candidates = local_cli.detect_credentials(platform_id)
     if not candidates and platform_id == "amazon-q":
         # Kiro may store its SSO cache under other roots; hint the user to paste

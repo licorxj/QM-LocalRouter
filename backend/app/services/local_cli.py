@@ -184,6 +184,48 @@ CLI_PLATFORMS: dict[str, dict] = {
         },
         "match_keywords": ["zcode", "zcode.z.ai"],
     },
+    "qoder": {
+        # Qoder 国际版：官方 CLI ~/.qoder/.auth/user（AES-CBC，key=machine_id）
+        # 复用 native_accounts.scan_qoder_cli_credentials/import_qoder_cli_credentials。
+        # 导入写入 EchoBird 本地存储（echo 账号），不走 api_keys。
+        "label": "Qoder (国际版 · CLI)",
+        "flow": "local_cli",
+        "import_modes": ["detect"],
+        "detect_paths": [
+            ("~/.qoder/.auth/user*", "qoder_cli", "Qoder CLI 凭证"),
+            (os.path.join(os.environ.get("USERPROFILE", ""), ".qoder", ".auth", "user*") if os.environ.get("USERPROFILE") else "", "qoder_cli", "Qoder CLI 凭证"),
+        ],
+        "token_fields": ["access_token", "device_token"],
+        "refresh": None,
+        "echo_import": True,
+        "upstream": {
+            "api_base": "https://api3.qoder.sh",
+            "auth": "qoder",
+            "profile_id": "qoder",
+            "protocols": ["openai", "custom"],
+        },
+        "match_keywords": ["qoder", "qoder.sh"],
+    },
+    "qodercn": {
+        # Qoder 国内版：~/.qoder.cn/.auth/user
+        "label": "Qoder CN (国内版 · CLI)",
+        "flow": "local_cli",
+        "import_modes": ["detect"],
+        "detect_paths": [
+            ("~/.qoder.cn/.auth/user*", "qoder_cli", "Qoder CN CLI 凭证"),
+            (os.path.join(os.environ.get("USERPROFILE", ""), ".qoder.cn", ".auth", "user*") if os.environ.get("USERPROFILE") else "", "qoder_cli", "Qoder CN CLI 凭证"),
+        ],
+        "token_fields": ["access_token", "device_token"],
+        "refresh": None,
+        "echo_import": True,
+        "upstream": {
+            "api_base": "https://gateway.qoder.com.cn",
+            "auth": "qoder",
+            "profile_id": "qodercn",
+            "protocols": ["openai", "custom"],
+        },
+        "match_keywords": ["qoder.cn", "qoder.com.cn"],
+    },
 }
 
 # WorkBuddy 平台条目 -> 官方区域（浏览器登录与上游调用都按条目固定区域）

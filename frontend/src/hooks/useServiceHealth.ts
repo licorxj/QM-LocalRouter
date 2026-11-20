@@ -6,8 +6,10 @@ type ServiceHealth = {
   /** null = still checking */
   running: boolean | null;
   starting: boolean;
+  restarting: boolean;
   check: () => Promise<boolean>;
   start: () => Promise<boolean>;
+  restart: () => Promise<boolean>;
   /** Error dialog state surfaced by start() when every path failed. */
   startError: boolean;
   dismissStartError: () => void;
@@ -21,6 +23,7 @@ type ServiceHealth = {
 export function useServiceHealth(): ServiceHealth {
   const [running, setRunning] = useState<boolean | null>(null);
   const [starting, setStarting] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [startError, setStartError] = useState(false);
 
   const check = useCallback(async (): Promise<boolean> => {
@@ -84,11 +87,48 @@ export function useServiceHealth(): ServiceHealth {
     return false;
   }, [check]);
 
+  // 通过管理器 stop → start 实现后端重启；轮询等待新进程就绪
+  const restart = useCallback(async (): Promise<boolean> => {
+    setRestarting(true);
+    try {
+      const stopRes = await fetch(`http://127.0.0.1:${MANAGER_PORT}/stop`, {
+        method: "POST",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!stopRes.ok) throw new Error("stop failed");
+      // 等待旧进程退出后再启动，避免端口占用
+      await new Promise((r) => setTimeout(r, 1200));
+      const startRes = await fetch(`http://127.0.0.1:${MANAGER_PORT}/start`, {
+        method: "POST",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!startRes.ok) throw new Error("start failed");
+      let retries = 0;
+      const poll = async () => {
+        retries += 1;
+        const ok = await check();
+        if (ok || retries >= 12) {
+          setRestarting(false);
+          return;
+        }
+        setTimeout(poll, 1000);
+      };
+      setTimeout(poll, 1500);
+      return true;
+    } catch {
+      setRestarting(false);
+      setStartError(true);
+      return false;
+    }
+  }, [check]);
+
   return {
     running,
     starting,
+    restarting,
     check,
     start,
+    restart,
     startError,
     dismissStartError: () => setStartError(false),
   };

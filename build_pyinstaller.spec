@@ -80,6 +80,20 @@ _common = dict(
         "app.services.workbuddy",
         "app.services.zcode",
         "app.services.zcode_system",
+        # 脚本插件系统 / 服务型插件 / 定时任务 / 开机自启均在函数体内动态
+        # import（router 懒加载），静态分析看不到，必须显式收集否则打包版
+        # 打开插件页/启用网关服务时报 ModuleNotFoundError。
+        "app.services.script_plugin_manager",
+        "app.services.script_plugin_context",
+        "app.services.script_plugin_permissions",
+        "app.services.script_plugin_settings",
+        "app.services.script_task_runner",
+        "app.services.script_scheduler",
+        "app.services.apiserver_manager",
+        "app.services.autostart",
+        # psutil 由 apiserver_manager 在函数内 import，用于端口占用检测/释放；
+        # 同时是 backend/requirements.txt 的运行时依赖。
+        "psutil",
         # fastapi 在函数体内动态 import python_multipart（backup /restore 等
         # Form 接口），确保冻结包内一定可用
         "python_multipart",

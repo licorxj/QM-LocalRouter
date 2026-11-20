@@ -1,0 +1,138 @@
+{
+  "id": "workbuddy-growth",
+  "name": "workbuddy成长系统",
+  "description": "WorkBuddy 成长中心自动化：支持在项目内已登录账号中多选/全选并串行执行；也可自动从本机桌面端提取登录态或手动填 token/uid。自动领养第一只 Buddy（签协议+领养，前置需先在桌面端发起一次对话）、旅行礼物、任务、补登保连签、连登兑换、盲盒、能量开 Buddy 并派出；可选每日签到。移植自 88lin/workbuddy-auto-signin（MIT）。",
+  "version": "1.3.0",
+  "entry": "main.py",
+  "function": "run",
+  "permissions": [],
+  "settings": [
+    {
+      "key": "token",
+      "type": "password",
+      "label": {
+        "zh": "访问令牌（通常留空自动提取）",
+        "en": "Access token (usually auto-extracted)"
+      },
+      "description": {
+        "zh": "选填。留空则自动从本机已登录的 WorkBuddy 桌面端登录态提取（推荐）；仅在自动提取失败时才需手动填写。",
+        "en": "Optional. Leave blank to extract automatically from the local signed-in WorkBuddy desktop session (recommended); fill manually only if auto-extraction fails."
+      },
+      "placeholder": "eyJhbGciOi..."
+    },
+    {
+      "key": "uid",
+      "type": "string",
+      "label": {
+        "zh": "用户 ID（通常留空自动提取）",
+        "en": "User ID (usually auto-extracted)"
+      },
+      "description": {
+        "zh": "选填。留空则自动从本机已登录的 WorkBuddy 桌面端登录态提取（推荐）；仅在自动提取失败时才需手动填写。",
+        "en": "Optional. Leave blank to extract automatically from the local signed-in WorkBuddy desktop session (recommended); fill manually only if auto-extraction fails."
+      }
+    },
+    {
+      "key": "enterprise_id",
+      "type": "string",
+      "label": {
+        "zh": "企业 ID（可选）",
+        "en": "Enterprise ID (optional)"
+      },
+      "description": {
+        "zh": "选填。默认从本机登录态自动读取，无需手动填写。",
+        "en": "Optional. Read automatically from the local session by default."
+      }
+    },
+    {
+      "key": "domain",
+      "type": "string",
+      "label": {
+        "zh": "域名（可选）",
+        "en": "Domain (optional)"
+      },
+      "description": {
+        "zh": "选填。默认从本机登录态自动读取，无需手动填写。",
+        "en": "Optional. Read automatically from the local session by default."
+      }
+    },
+    {
+      "key": "endpoint",
+      "type": "string",
+      "label": {
+        "zh": "服务地址",
+        "en": "Endpoint"
+      },
+      "default": "https://copilot.tencent.com",
+      "description": {
+        "zh": "WorkBuddy 服务端根地址，一般无需修改。",
+        "en": "WorkBuddy service root URL; usually unchanged."
+      }
+    },
+    {
+      "key": "action",
+      "type": "select",
+      "label": {
+        "zh": "执行动作",
+        "en": "Action"
+      },
+      "default": "daily",
+      "description": {
+        "zh": "daily=签到+成长中心（含自动领养 Buddy）；growth=仅成长中心（含自动领养）；adopt=仅自动领养第一只 Buddy；checkin=仅每日签到；status=仅查登录/签到状态。",
+        "en": "daily=checkin+growth (incl. auto-adopt Buddy); growth=growth only (incl. auto-adopt); adopt=auto-adopt first Buddy only; checkin=daily checkin only; status=status only."
+      },
+      "options": [
+        {
+          "value": "daily",
+          "label": {
+            "zh": "签到 + 成长中心",
+            "en": "Checkin + Growth"
+          }
+        },
+        {
+          "value": "growth",
+          "label": {
+            "zh": "仅成长中心",
+            "en": "Growth only"
+          }
+        },
+        {
+          "value": "adopt",
+          "label": {
+            "zh": "仅自动领养 Buddy",
+            "en": "Adopt Buddy only"
+          }
+        },
+        {
+          "value": "checkin",
+          "label": {
+            "zh": "仅每日签到",
+            "en": "Checkin only"
+          }
+        },
+        {
+          "value": "status",
+          "label": {
+            "zh": "仅查状态",
+            "en": "Status only"
+          }
+        }
+      ]
+    },
+    {
+      "key": "budget_seconds",
+      "type": "integer",
+      "label": {
+        "zh": "时间预算（秒）",
+        "en": "Time budget (seconds)"
+      },
+      "default": 90,
+      "min": 30,
+      "max": 110,
+      "description": {
+        "zh": "单次执行最多用多少秒做网络请求（宿主上限 120s）。预算耗尽会跳过后续步骤，避免整体超时。",
+        "en": "Max seconds of network work per run (host limit 120s). Later steps are skipped when exhausted."
+      }
+    }
+  ]
+}
